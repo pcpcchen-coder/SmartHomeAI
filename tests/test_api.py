@@ -253,3 +253,14 @@ def test_external_name_match_is_reversible_and_keeps_physical_device(ctx):
  assert c.delete(p).status_code==200
  assert s.one('devices',d['id'])['aliases']==[] and s.one('devices',d['id'])['placement']==position
  assert len(a.sent)==0
+
+def test_aifa_login_auth_local_only_and_password_validation_redacted(ctx):
+ c,s,a,d=ctx
+ c.headers.pop('Authorization');assert c.get('/api/v1/integrations/aifa').status_code==401
+ c.headers['Authorization']='Bearer '+s.master_token
+ response=c.post('/api/v1/integrations/aifa/login',json={'email':False,'password':'secret-not-echoed'})
+ assert response.status_code==422 and 'secret-not-echoed' not in response.text
+ with TestClient(module.app,base_url='http://127.0.0.1:8788',client=('192.168.50.70',60000)) as remote:
+  response=remote.post('/api/v1/integrations/aifa/login',headers={'Authorization':'Bearer '+s.master_token},json={'email':'fixture@example.test','password':'secret'})
+  assert response.status_code==403
+ assert c.get('/api/v1/integrations/ewelink').json()['connected'] is False

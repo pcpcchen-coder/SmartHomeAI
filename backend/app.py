@@ -15,11 +15,12 @@ from .adapters import Adapters, AdapterError
 from .telemetry import metrics_for, sensor_view, CloudSnapshots
 from .telemetry_scheduler import TelemetryScheduler, schedule_view
 from .infrared import Infrared, controller_type, ir_view
+from .aifa import AifaAccount, account_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared()
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount()
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -179,6 +180,32 @@ async def ir_command(id:str,body:IRCommand,request:Request):
  if not 1<=len(idem)<=128:raise HTTPException(422,detail='指令識別碼長度不正確')
  try:return await infrared.send(store,d,body.key,body.key_id,idem)
  except AdapterError as e:raise HTTPException(429 if e.code=='ir_cooldown' else 422 if e.code=='ir_key_unsupported' else 409,detail={'code':e.code,'message':e.message})
+
+@app.get(API+'/integrations/ewelink',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_status():
+ return {'status':store.one('settings','ewelink-integration',{}).get('status','unlinked'),'connected':False}
+
+@app.get(API+'/integrations/aifa',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_status():return account_view(store)
+
+@app.post(API+'/integrations/aifa/login',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_login(request:Request):
+ # Credentials may only be entered on the controller Mac, never over LAN HTTP.
+ if request.client.host not in ['127.0.0.1','::1']:raise HTTPException(403,detail='請在中控 Mac 上連結 AIFA 帳號')
+ try:body=await request.json()
+ except ValueError:raise HTTPException(422,detail='登入欄位格式無效')
+ if not isinstance(body,dict) or set(body)!={'email','password'} or not all(isinstance(body.get(k),str) and 0<len(body[k])<=1024 for k in ['email','password']):raise HTTPException(422,detail='請輸入 AIFA Smart 帳號與密碼')
+ try:return await aifa_account.login(store,body['email'].strip(),body['password'])
+ except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
+
+@app.post(API+'/integrations/aifa/discover',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_discover():
+ try:return await aifa_account.discover(store)
+ except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
+
+@app.delete(API+'/integrations/aifa',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_disconnect():
+ await aifa_account.disconnect(store);return account_view(store)
 
 class ExternalMatch(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)

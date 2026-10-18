@@ -1,5 +1,13 @@
 # 架構與控制合約 v1
 
+## AIFA 與 eWeLink 接入進度
+
+AIFA Smart 相容接入目前只做登入及控制器／家電清單讀取，沒有家電指令路徑。協定參考 [社群實作](https://github.com/PinLin/aifa-smart-homeassistant)，屬非公開介面，廠商更新可能使其失效。沒有安裝或執行社群程式。
+
+`POST /integrations/aifa/login` 僅允許本機 peer，仍需中控認證與來源檢查。email/password 僅經 HTTPS 傳到固定 api.aifaremote.com/oauth2/token，不允許重新導向，密碼不保存。access/refresh token 加密保存，期限到達可刷新。錯誤不回傳上游原文或輸入值。`GET /integrations/aifa` 回傳白名單清單快取，沒有 token。`POST /integrations/aifa/discover` 讀 /devices，最少相隔 60 秒，失敗保留清單；完整 MAC 才可對應既有設備，不推測 IP、不改位置。`DELETE /integrations/aifa` 只移除本機 token 與快取，不刪除手機 App 設備，也不宣稱向廠商撤銷 token。
+
+`GET /integrations/ewelink` 顯示接入階段。介面呈現個人開發者認證、建立應用、帳號授權三步。尚未提供 eWeLink OAuth callback 或控制；認證通過、取得專屬應用憑證後，依 [官方 OAuth 文件](https://github.com/CoolKit-Technologies/eWeLink-API/blob/main/en/OAuth2.0.md) 接入。
+
 瀏覽器（React / Three.js）→ 本機 FastAPI → 設備轉接器。SQLite 為配置與指令持久化來源，觀測狀態另存，金鑰不進前端或配置匯出。前端不直接存取設備網路。外部系統使用相同 API，避免依畫面或廠商差異控制。
 
 ## 身分與空間
