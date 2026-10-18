@@ -1,0 +1,141 @@
+{
+  "devices": [
+    {
+      "ips": [],
+      "mac": "",
+      "vendor": "示例",
+      "config": {},
+      "placement": {
+        "room_id": "living",
+        "x": 0.3,
+        "y": 0.4,
+        "z": 1,
+        "confirmed": false,
+        "source": "示例位置"
+      },
+      "notes": "僅供介面配置；沒有真實位址、認證或讀值。",
+      "favorite": false,
+      "id": "example-light",
+      "name": "示例燈具",
+      "kind": "light",
+      "adapter": "lifx",
+      "category": "照明"
+    },
+    {
+      "ips": [],
+      "mac": "",
+      "vendor": "示例",
+      "config": {
+        "power_dps": [],
+        "mapping": {
+          "2": {
+            "code": "temp_current",
+            "type": "Integer",
+            "values": {
+              "scale": 1,
+              "unit": "°C"
+            }
+          },
+          "3": {
+            "code": "humidity_value",
+            "type": "Integer",
+            "values": {
+              "scale": 0,
+              "unit": "%"
+            }
+          },
+          "4": {
+            "code": "co2_value",
+            "type": "Integer",
+            "values": {
+              "scale": 0,
+              "unit": "ppm"
+            }
+          }
+        }
+      },
+      "placement": null,
+      "notes": "僅供介面配置；沒有真實位址、認證或讀值。",
+      "favorite": false,
+      "id": "example-sensor",
+      "name": "示例空氣感測器",
+      "kind": "sensor",
+      "adapter": "tuya",
+      "category": "感測器"
+    },
+    {
+      "ips": [],
+      "mac": "",
+      "vendor": "示例",
+      "config": {},
+      "placement": null,
+      "notes": "僅供介面配置；沒有真實位址、認證或讀值。",
+      "favorite": false,
+      "id": "example-dehumidifier",
+      "name": "示例除濕機",
+      "kind": "dehumidifier",
+      "adapter": "lg",
+      "category": "家電"
+    }
+  ],
+  "layout": {
+    "version": 1,
+    "width_m": 8,
+    "depth_m": 6,
+    "wall_height_m": 2.7,
+    "rooms": [
+      {
+        "id": "living",
+        "name": "客廳（示例）",
+        "color": "#cfba9b",
+        "polygon": [
+          [
+            0.05,
+            0.05
+          ],
+          [
+            0.6,
+            0.05
+          ],
+          [
+            0.6,
+            0.95
+          ],
+          [
+            0.05,
+            0.95
+          ]
+        ]
+      },
+      {
+        "id": "study",
+        "name": "書房（示例）",
+        "color": "#afc2c4",
+        "polygon": [
+          [
+            0.6,
+            0.05
+          ],
+          [
+            0.95,
+            0.05
+          ],
+          [
+            0.95,
+            0.95
+          ],
+          [
+            0.6,
+            0.95
+          ]
+        ]
+      }
+    ],
+    "image": "/assets/home/example-floorplan.svg",
+    "model_url": null,
+    "model_scale": 1,
+    "source_label": "通用示例配置，並非武陵居圖面",
+    "geometry_status": "示例尺寸，請依現場調整",
+    "sources": []
+  }
+}

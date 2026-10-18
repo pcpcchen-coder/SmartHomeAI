@@ -1,0 +1,24 @@
+.venv/
+frontend/node_modules/
+data/
+*.log
+__pycache__/
+.pytest_cache/
+web/
+outputs/
+work/
+# Private house geometry, device inventory, conversions and validation records.
+assets/*
+!assets/example-seed.json
+!assets/example-floorplan.svg
+!assets/README.md
+backend/seed.py
+docs/*validation*.json
+docs/*report.json
+docs/acceptance.md
+.DS_Store
+.env
+.env.*
+*.sqlite3*
+.encryption-key
+.api-token
