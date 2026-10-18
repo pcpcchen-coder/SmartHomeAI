@@ -207,6 +207,22 @@ async def aifa_discover():
 async def aifa_disconnect():
  await aifa_account.disconnect(store);return account_view(store)
 
+class AifaPower(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ power:bool
+
+@app.post(API+'/integrations/aifa/devices/{hub}/children/{child}/status',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_ac_status(hub:str,child:str):
+ try:return await aifa_account.ac_status(store,hub,child)
+ except AdapterError as e:raise HTTPException(409,detail=e.message)
+
+@app.post(API+'/integrations/aifa/devices/{hub}/children/{child}/power',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_ac_power(hub:str,child:str,body:AifaPower,request:Request):
+ idem=request.headers.get('idempotency-key')
+ if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
+ try:return await aifa_account.ac_power(store,hub,child,body.power,idem)
+ except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
+
 class ExternalMatch(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)
  device_id:str

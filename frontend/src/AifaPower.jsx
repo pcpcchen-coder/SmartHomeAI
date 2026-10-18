@@ -1,0 +1,7 @@
+import React,{useState} from 'react';
+export default function AifaPower({hub,child,api}){
+ const[busy,setBusy]=useState(false),[status,setStatus]=useState(null),[message,setMessage]=useState('');
+ if(child.type!=='0'||child.sub_type!=='0')return <p className="ir-note">此家電的控制協定待確認</p>;
+ const run=async power=>{setBusy(true);setMessage('');try{const r=await api(`/integrations/aifa/devices/${encodeURIComponent(hub.id)}/children/${encodeURIComponent(child.id)}/${power===null?'status':'power'}`,{method:'POST',...(power===null?{}:{headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({power})})});setStatus(power===null?r.status:r.controller_status);setMessage(r.message||(!r.status?'控制器尚未回覆開關狀態':''))}catch(e){setMessage(e.message);setStatus(null)}finally{setBusy(false)}};
+ return <div className="aifa-power"><p className="ir-note">{status?`控制器回報：${status.power?'開啟':'關閉'} · ${new Date(status.received_at*1000).toLocaleTimeString('zh-TW',{hour12:false})}`:'尚未查詢控制器狀態'}</p><div className="inline-actions"><button className="outline" disabled={busy} onClick={()=>run(true)}>開機</button><button className="outline" disabled={busy} onClick={()=>run(false)}>關機</button><button className="text-button" disabled={busy} onClick={()=>run(null)}>{busy?'處理中…':'查詢控制器狀態'}</button></div><p className="ir-note">紅外線單向控制，控制器紀錄不等於冷氣實際狀態。溫度、模式與風速尚待接入。</p>{message&&<p role="status" className="ir-result">{message}</p>}</div>
+}

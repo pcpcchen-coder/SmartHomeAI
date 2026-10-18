@@ -2,7 +2,7 @@
 
 ## AIFA 與 eWeLink 接入進度
 
-AIFA Smart 相容接入目前只做登入及控制器／家電清單讀取，沒有家電指令路徑。協定參考 [社群實作](https://github.com/PinLin/aifa-smart-homeassistant)，屬非公開介面，廠商更新可能使其失效。沒有安裝或執行社群程式。
+AIFA Smart 相容接入支援登入、清單讀取，以及下方所述的基本冷氣開關。協定參考 [社群實作](https://github.com/PinLin/aifa-smart-homeassistant)，屬非公開介面，廠商更新可能使其失效。沒有安裝或執行社群程式。
 
 `POST /integrations/aifa/login` 僅允許本機 peer，仍需中控認證與來源檢查。email/password 僅經 HTTPS 傳到固定 api.aifaremote.com/oauth2/token，不允許重新導向，密碼不保存。access/refresh token 加密保存，期限到達可刷新。錯誤不回傳上游原文或輸入值。`GET /integrations/aifa` 回傳白名單清單快取，沒有 token。`POST /integrations/aifa/discover` 讀 /devices，最少相隔 60 秒，失敗保留清單；完整 MAC 才可對應既有設備，不推測 IP、不改位置。`DELETE /integrations/aifa` 只移除本機 token 與快取，不刪除手機 App 設備，也不宣稱向廠商撤銷 token。
 
@@ -127,3 +127,5 @@ GET /telemetry 的各 item.auto_update 含設定、last_attempt_at、last_succes
 外部名稱觀察與實體設備分開存放；只允許人工對應 switch/light/unknown-smart。別名不改變既有識別與控制路徑，解除時只移除此對應新增的別名。這不是 Google Home 控制 API。i-Ctrl 的 API 接入仍須另外取得 AIFA 支援與授權，不使用 Tuya 認證代替。
 
 官方文件：[服務與 API 清單](https://developer.tuya.com/en/docs/cloud/ir-control-hub-open-service?id=Kb3oe2mk8ya72)、[家電清單](https://developer.tuya.com/en/docs/cloud/791872dd27?id=Kb3oe4qw98wmm)、[實際按鍵](https://developer.tuya.com/en/docs/cloud/ff7882b8a5?id=Kb3oe37sqdjx5)、[送出按鍵](https://developer.tuya.com/en/docs/cloud/d59591e9f6?id=Kb3oe4hspk8bi)。
+
+AIFA 已擴充 type=0/subType=0 冷氣的手動開機與關機，以及控制器狀態查詢。使用驗證憑證的 TLS aifaremote.com:8751，MAC 與 token 握手必須成功。`POST /integrations/aifa/devices/{hub}/children/{child}/status` 只查詢；同路徑 `/power` 接收嚴格布林 power 與必填 Idempotency-Key。僅接受 24 小時內帳號清單中的家電，控制序列化、兩秒間隔，不自動重送。指令結果始終為 unconfirmed，控制器狀態另列，不能宣稱冷氣實際動作完成。溫度／模式／風速尚未接入。

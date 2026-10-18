@@ -17,7 +17,7 @@ def test_account_login_read_only_and_never_persists_password(tmp_path,monkeypatc
  orig=httpx.AsyncClient;monkeypatch.setattr(httpx,'AsyncClient',lambda **kw:orig(**kw,transport=httpx.MockTransport(handler)))
  a=AifaAccount();view=asyncio.run(a.login(s,'fixture@example.test','fixture-password'))
  assert calls==[('POST','/oauth2/token'),('GET','/devices')]
- assert view['items'][0]['matched_device_id']=='existing' and view['read_only']
+ assert view['items'][0]['matched_device_id']=='existing' and view['supports_ac_power']
  assert s.one('devices','existing')['placement']=={'confirmed':True}
  assert 'password' not in json.dumps(s.secret('aifa')) and 'fixture-token' not in json.dumps(view) and 'private_field' not in json.dumps(view)
  assert b'fixture-password' not in (tmp_path/'home.sqlite3').read_bytes()
@@ -39,4 +39,19 @@ def test_failed_discovery_preserves_previous_inventory_and_can_disconnect(tmp_pa
   assert account_view(s)['items']==[{'id':'existing'}]
   await a.disconnect(s);assert not account_view(s)['connected']
   assert not s.secret('aifa') and not account_view(s)['items']
+ asyncio.run(run());s.db.close()
+
+def test_power_ownership_idempotency_and_unconfirmed(tmp_path):
+ s=Store(tmp_path);a=AifaAccount();calls=[]
+ s.put('settings','aifa-discovery',{'queried_at':time.time(),'items':[{'id':'owned','name':'demo','mac':'aabbccddeeff','children':[{'id':'ac','type':'0','sub_type':'0'}]}]})
+ async def exchange(store,d,power=None,on_send=None):
+  calls.append(power)
+  if on_send:on_send()
+  return {'sent':True,'status':{'power':power}}
+ a.ac_exchange=exchange
+ async def run():
+  with pytest.raises(AdapterError):await a.ac_power(s,'unknown','ac',True,'bad')
+  r=await a.ac_power(s,'owned','ac',True,'one');assert r['status']=='unconfirmed'
+  assert await a.ac_power(s,'owned','ac',True,'one')==r and calls==[True]
+  with pytest.raises(AdapterError):await a.ac_power(s,'owned','ac',False,'one')
  asyncio.run(run());s.db.close()
