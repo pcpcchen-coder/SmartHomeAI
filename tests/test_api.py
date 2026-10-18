@@ -232,3 +232,24 @@ def test_cloud_schedule_can_be_paused_without_valid_credentials(ctx):
  c,s,a,d=ctx;sensor=next(x for x in c.get('/api/v1/telemetry').json()['items'] if x['kind']=='sensor')
  r=c.put('/api/v1/devices/'+sensor['id']+'/telemetry-schedule',json={'enabled':False,'source':'tuya-cloud','interval_seconds':300})
  assert r.status_code==200 and r.json()['next_run_at'] is None
+
+
+def test_controller_endpoints_require_auth_and_reject_non_ir(ctx):
+ c,s,a,d=ctx
+ assert c.get('/api/v1/controllers').status_code==200
+ assert c.post('/api/v1/controllers/'+d['id']+'/discover').status_code==422
+ assert c.post('/api/v1/devices/'+d['id']+'/infrared-commands',json={'key':'Power','key_id':1}).status_code==422
+ c.headers.pop('Authorization')
+ assert c.get('/api/v1/controllers').status_code==401
+ assert c.post('/api/v1/devices/'+d['id']+'/infrared-commands',json={'key':'Power','key_id':1}).status_code==401
+
+
+def test_external_name_match_is_reversible_and_keeps_physical_device(ctx):
+ c,s,a,d=ctx;position=d['placement'];s.put('settings','external-observations',[{'id':'observed-outlet','name':'示例別名','room_name':'示例房間'}])
+ p='/api/v1/external-observations/observed-outlet/match'
+ assert c.put(p,json={'device_id':d['id']}).status_code==200
+ saved=s.one('devices',d['id']);assert saved['aliases']==['示例別名'] and saved['placement']==position
+ assert c.get('/api/v1/home').json()['pending_external'][0]['matched_device_id']==d['id']
+ assert c.delete(p).status_code==200
+ assert s.one('devices',d['id'])['aliases']==[] and s.one('devices',d['id'])['placement']==position
+ assert len(a.sent)==0

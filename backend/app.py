@@ -14,11 +14,12 @@ from .store import Store
 from .adapters import Adapters, AdapterError
 from .telemetry import metrics_for, sensor_view, CloudSnapshots
 from .telemetry_scheduler import TelemetryScheduler, schedule_view
+from .infrared import Infrared, controller_type, ir_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared()
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -65,7 +66,7 @@ def public(d):
  ready=adapters.configured(d)
  gid=d.get('config',{}).get('gateway_id');gateway=next((x for x in store.devices() if x.get('config',{}).get('device_id')==gid),None) if gid else None
  via={k:gateway[k] for k in ['id','name','ips']} if gateway else None
- return {**d,'gateway':via,'telemetry':sensor_view(store,d),'configured':ready,'state':state,'can_control':bool(ready and state['fresh'] and state.get('available') and state.get('commands')),'credential_configured':bool(store.secret(d['id']))}
+ return {**d,'infrared':ir_view(store,d),'gateway':via,'telemetry':sensor_view(store,d),'configured':ready,'state':state,'can_control':bool(ready and state['fresh'] and state.get('available') and state.get('commands')),'credential_configured':bool(store.secret(d['id']))}
 
 async def refresh_one(d):
  async with locks.setdefault(d['id'],asyncio.Lock()):
@@ -133,7 +134,7 @@ async def health():return {'status':'ok','service':'wuling-home-control','versio
 @app.get(API+'/home',dependencies=[Depends(auth)],tags=['Home'])
 async def home():
  devices=[public(d) for d in store.devices()]
- return {'schema_version':1,'name':'武陵居','layout':store.one('settings','layout'),'devices':devices,'events':store.latest_events(),'summary':{'total':len(devices),'available':sum(d['state'].get('available') is True and d['state']['fresh'] for d in devices),'controllable':sum(d['can_control'] for d in devices),'unplaced':sum(not d.get('placement') or not d['placement'].get('confirmed') for d in devices)},'server_time':time.time()}
+ return {'schema_version':1,'name':'武陵居','layout':store.one('settings','layout'),'devices':devices,'pending_external':store.one('settings','external-observations',[]),'events':store.latest_events(),'summary':{'total':len(devices),'available':sum(d['state'].get('available') is True and d['state']['fresh'] for d in devices),'controllable':sum(d['can_control'] for d in devices),'unplaced':sum(not d.get('placement') or not d['placement'].get('confirmed') for d in devices)},'server_time':time.time()}
 
 @app.get(API+'/devices',dependencies=[Depends(auth)],tags=['Devices'])
 async def devices():return {'items':[public(d) for d in store.devices()]}
@@ -145,6 +146,66 @@ async def device(id:str):return public(find(id))
 async def telemetry():
  items=[x for d in store.devices() if (x:=sensor_view(store,d))]
  return {'items':items,'server_time':time.time(),'retention_days':30,'estimated_cloud_status_queries_per_day':sum(x['auto_update']['estimated_status_queries_per_day'] for x in items),'cloud_polling':bool(telemetry_scheduler and telemetry_scheduler.running) and any(x['auto_update']['config']['enabled'] and x['auto_update']['config']['source']=='tuya-cloud' for x in items),'background_running':bool(telemetry_scheduler and telemetry_scheduler.running),'cloud_cooldown_seconds':60}
+
+@app.get(API+'/controllers',dependencies=[Depends(auth)],tags=['Controllers'])
+async def controllers():
+ devices=store.devices();items=[]
+ for d in devices:
+  kind=controller_type(d)
+  if not kind:continue
+  cid=d.get('config',{}).get('device_id')
+  children=[public(x) for x in devices if cid and x.get('config',{}).get('gateway_id')==cid]
+  items.append({'device':public(d),'controller_type':kind,'children':children,'discovery':store.one('settings','ir-discovery:'+d['id'],{})})
+ return {'items':items,'external_observations':store.one('settings','external-observations',[])}
+
+@app.post(API+'/controllers/{id}/discover',dependencies=[Depends(auth)],tags=['Controllers'])
+async def discover_controller(id:str):
+ d=find(id)
+ if controller_type(d)!='tuya-ir':raise HTTPException(422,detail='此控制器尚未提供紅外線同步介面')
+ try:return await infrared.discover(store,d)
+ except AdapterError as e:raise HTTPException(429 if e.code=='ir_cooldown' else 409,detail={'code':e.code,'message':e.message})
+ except (httpx.HTTPError,ValueError,KeyError,TypeError):raise HTTPException(502,detail='紅外線同步未完成，請稍後再試')
+
+class IRCommand(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ key:str=Field(min_length=1,max_length=128)
+ key_id:int=Field(ge=0)
+
+@app.post(API+'/devices/{id}/infrared-commands',dependencies=[Depends(auth)],tags=['Controllers'])
+async def ir_command(id:str,body:IRCommand,request:Request):
+ d=find(id)
+ if not d.get('config',{}).get('infrared_virtual'):raise HTTPException(422,detail='此設備不是紅外線家電')
+ idem=request.headers.get('idempotency-key') or str(uuid.uuid4())
+ if not 1<=len(idem)<=128:raise HTTPException(422,detail='指令識別碼長度不正確')
+ try:return await infrared.send(store,d,body.key,body.key_id,idem)
+ except AdapterError as e:raise HTTPException(429 if e.code=='ir_cooldown' else 422 if e.code=='ir_key_unsupported' else 409,detail={'code':e.code,'message':e.message})
+
+class ExternalMatch(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ device_id:str
+
+@app.put(API+'/external-observations/{id}/match',dependencies=[Depends(auth)],tags=['Controllers'])
+async def match_external(id:str,body:ExternalMatch):
+ d=find(body.device_id);rows=store.one('settings','external-observations',[]);entry=next((x for x in rows if x['id']==id),None)
+ if not entry:raise HTTPException(404,detail='找不到待對應的外部名稱')
+ if d['kind'] not in ['switch','light','unknown-smart']:raise HTTPException(422,detail='請選擇插座、開關或待辨識的實體裝置')
+ if entry.get('matched_device_id') and entry['matched_device_id']!=d['id']:raise HTTPException(409,detail='這個名稱已對應設備，請先核對原有設定')
+ added=entry['name'] not in d.get('aliases',[])
+ aliases=list(dict.fromkeys([*d.get('aliases',[]),entry['name']]))
+ d['aliases']=aliases;store.put('devices',d['id'],d);entry.update(matched_device_id=d['id'],matched_at=time.time(),alias_added=entry.get('alias_added',added))
+ store.put('settings','external-observations',rows);store.event('device.alias.matched',{'device_id':d['id'],'message':'已人工確認外部名稱與設備對應'})
+ return public(d)
+
+@app.delete(API+'/external-observations/{id}/match',dependencies=[Depends(auth)],tags=['Controllers'])
+async def unmatch_external(id:str):
+ rows=store.one('settings','external-observations',[]);entry=next((x for x in rows if x['id']==id),None)
+ if not entry:raise HTTPException(404,detail='找不到外部名稱')
+ d=store.one('devices',entry.get('matched_device_id'))
+ if d and entry.get('alias_added') and not any(x['id']!=id and x.get('matched_device_id')==d['id'] and x['name']==entry['name'] for x in rows):
+  d['aliases']=[x for x in d.get('aliases',[]) if x!=entry['name']];store.put('devices',d['id'],d)
+ for key in ['matched_device_id','matched_at','alias_added']:entry.pop(key,None)
+ store.put('settings','external-observations',rows);store.event('device.alias.unmatched',{'message':'已解除外部名稱對應，實體設備保留'})
+ return {'status':'unmatched'}
 
 class TelemetrySchedule(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)

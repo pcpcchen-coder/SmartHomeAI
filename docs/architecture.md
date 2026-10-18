@@ -99,3 +99,23 @@ GET /telemetry 的各 item.auto_update 含設定、last_attempt_at、last_succes
 排程在 FastAPI lifespan 執行，不由瀏覽器計時器觸發。每台僅一個待執行／執行中工作，最多十台並行，共用閘道的工作序列化。沒有自訂設定時保持既有 35 秒區網讀取。設定可按台暫停，手動讀取仍可用。設定及下次執行時間保存在 SQLite，重啟或喚醒不補送積欠查詢。完成後開始下一段間隔；雲端失敗依 2 倍、4 倍等退避，最多一小時（原設定更長時維持原間隔）。失敗保留舊值與歷史。
 
 每日雲端查詢估算為 ceil(86400 / interval_seconds)，僅估計此設備狀態查詢，不含認證、手動查詢、服務中斷或退避。手動與排程共用至少 60 秒的限制，沒有自動付費升級或新增服務。
+
+## 紅外線與控制器合約
+
+| 方法 | 路徑 | 用途 |
+| --- | --- | --- |
+| GET | /controllers | 快取的控制器、實際關聯家電、同步結果與待對應外部名稱；不查雲端 |
+| POST | /controllers/{id}/discover | 讀取已授權 Tuya 紅外線控制器的家電及實際按鍵；最少相隔 60 秒 |
+| POST | /devices/{id}/infrared-commands | `{key, key_id}`，搭配 Idempotency-Key；僅接受同步出的按鍵 |
+| PUT | /external-observations/{id}/match | `{device_id}`；人工加入名稱別名，不改 IP、位置或執行開關 |
+| DELETE | /external-observations/{id}/match | 解除這筆名稱對應，保留實體設備 |
+
+紅外線使用固定資料中心 HTTPS 與 HMAC-SHA256，僅允許 token、remotes、keys 及 raw/command 官方路徑。控制器 ID 必須出現在已加密儲存的授權設備清單，remote ID 必須出現在最新成功同步結果。既有家電依控制器及 remote/node ID 對應，保留 ID、使用者名稱與位置；新家電沒有獨立 IP，也不從紅外線名稱猜測房間。同步不刪除原有清單；已移除、同步失敗或超過 24 小時的按鍵停用。
+
+各設備 public.infrared 含 keys、ready、controller_id、controller_name、queried_at、error、one_way。ready 只表示按鍵可用，不表示家電在線或目前開關狀態。一般 can_control 仍是雙向控制能力，不涵蓋紅外線。
+
+雲端 raw/command 收到 true 後，指令結果為 unconfirmed，transport_status=accepted_by_cloud；逾時為 unconfirmed/unknown，明確拒絕為 failed。沒有紅外線實體狀態回讀，不寫入 power，也不自動重送。相同 Idempotency-Key 及相同內容回傳原結果；不同內容拒絕。每台控制器指令序列化且至少相隔一秒。
+
+外部名稱觀察與實體設備分開存放；只允許人工對應 switch/light/unknown-smart。別名不改變既有識別與控制路徑，解除時只移除此對應新增的別名。這不是 Google Home 控制 API。i-Ctrl 的 API 接入仍須另外取得 AIFA 支援與授權，不使用 Tuya 認證代替。
+
+官方文件：[服務與 API 清單](https://developer.tuya.com/en/docs/cloud/ir-control-hub-open-service?id=Kb3oe2mk8ya72)、[家電清單](https://developer.tuya.com/en/docs/cloud/791872dd27?id=Kb3oe4qw98wmm)、[實際按鍵](https://developer.tuya.com/en/docs/cloud/ff7882b8a5?id=Kb3oe37sqdjx5)、[送出按鍵](https://developer.tuya.com/en/docs/cloud/d59591e9f6?id=Kb3oe4hspk8bi)。
