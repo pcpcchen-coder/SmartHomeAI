@@ -212,3 +212,23 @@ def test_telemetry_is_authenticated_read_only_and_history_validated(ctx,monkeypa
  assert c.get('/api/v1/telemetry').status_code==401
  assert c.get(p,params={'metric':'temperature'}).status_code==401
  assert c.post('/api/v1/devices/'+sensor['id']+'/sensor-cloud-snapshot').status_code==401
+
+
+def test_telemetry_schedule_validation_persistence_and_no_upstream_call(ctx,monkeypatch):
+ c,s,a,d=ctx
+ sensor=next(x for x in c.get('/api/v1/telemetry').json()['items'] if x['kind']=='sensor');p='/api/v1/devices/'+sensor['id']+'/telemetry-schedule'
+ body={'enabled':True,'source':'local','interval_seconds':15}
+ before=len(a.sent);r=c.put(p,json=body);assert r.status_code==200 and r.json()['config']==body
+ second=Store(s.path);assert second.one('settings','sensor-refresh:'+sensor['id'])==body;second.db.close()
+ assert len(a.sent)==before
+ for patch in [{'interval_seconds':14},{'interval_seconds':86401},{'interval_seconds':True},{'interval_seconds':'60'},{'enabled':'false'},{'source':'unsupported'}]:
+  assert c.put(p,json={**body,**patch}).status_code==422
+ assert c.put(p,json={**body,'source':'tuya-cloud','interval_seconds':59}).status_code==422
+ assert c.put(p,json={**body,'source':'tuya-cloud','interval_seconds':60}).status_code==409
+ c.headers.pop('Authorization');assert c.put(p,json=body).status_code==401
+
+
+def test_cloud_schedule_can_be_paused_without_valid_credentials(ctx):
+ c,s,a,d=ctx;sensor=next(x for x in c.get('/api/v1/telemetry').json()['items'] if x['kind']=='sensor')
+ r=c.put('/api/v1/devices/'+sensor['id']+'/telemetry-schedule',json={'enabled':False,'source':'tuya-cloud','interval_seconds':300})
+ assert r.status_code==200 and r.json()['next_run_at'] is None

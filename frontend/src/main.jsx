@@ -57,7 +57,7 @@ function App(){
    {page==='integrations'&&<IntegrationPage devices={devices} reload={load} notify={notify} openConnection={setConnection}/>}
    {page==='activity'&&<ActivityPage events={home.events} devices={devices}/>}
   </>}
-  <footer className="app-footer"><span>武陵居 HOME OS <i/> 私人區網中控</span><span><Clock size={12}/>{home?'狀態約每 35 秒觀測一次':'正在連線'}</span></footer></main></div>
+  <footer className="app-footer"><span>武陵居 HOME OS <i/> 私人區網中控</span><span><Clock size={12}/>{home?'背景依設備設定自動更新':'正在連線'}</span></footer></main></div>
   {toast&&<div role="status" className="toast"><CheckCircle2 size={18}/>{toast}<button aria-label="關閉通知" onClick={()=>setToast('')}><X size={14}/></button></div>}
   {connection&&<ConnectionModal device={connection} close={()=>setConnection(null)} done={async()=>{setConnection(null);await load()}} notify={notify}/>}
   {calibrate&&<LayoutModal layout={layout} close={()=>setCalibrate(false)} save={saveLayout} notify={notify}/>}

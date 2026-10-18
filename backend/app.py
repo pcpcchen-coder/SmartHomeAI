@@ -13,11 +13,12 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from .store import Store
 from .adapters import Adapters, AdapterError
 from .telemetry import metrics_for, sensor_view, CloudSnapshots
+from .telemetry_scheduler import TelemetryScheduler, schedule_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots()
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -89,13 +90,11 @@ async def refresh_all():
   await asyncio.gather(*(worker(d) for d in store.devices()))
   store.event('devices.refreshed',{'message':'已更新設備觀測狀態'})
 
-async def poll():
- while True:
-  await refresh_all();await asyncio.sleep(35)
-
 @asynccontextmanager
 async def lifespan(app):
- initialize();task=asyncio.create_task(poll()) if os.environ.get('WULING_POLL','1')=='1' else None
+ global telemetry_scheduler
+ initialize();telemetry_scheduler=TelemetryScheduler(store,cloud_snapshots,refresh_one)
+ task=asyncio.create_task(telemetry_scheduler.run()) if os.environ.get('WULING_POLL','1')=='1' else None
  yield
  if task:
   task.cancel()
@@ -145,7 +144,28 @@ async def device(id:str):return public(find(id))
 @app.get(API+'/telemetry',dependencies=[Depends(auth)],tags=['Telemetry'])
 async def telemetry():
  items=[x for d in store.devices() if (x:=sensor_view(store,d))]
- return {'items':items,'server_time':time.time(),'retention_days':30,'cloud_polling':False,'cloud_cooldown_seconds':60}
+ return {'items':items,'server_time':time.time(),'retention_days':30,'estimated_cloud_status_queries_per_day':sum(x['auto_update']['estimated_status_queries_per_day'] for x in items),'cloud_polling':bool(telemetry_scheduler and telemetry_scheduler.running) and any(x['auto_update']['config']['enabled'] and x['auto_update']['config']['source']=='tuya-cloud' for x in items),'background_running':bool(telemetry_scheduler and telemetry_scheduler.running),'cloud_cooldown_seconds':60}
+
+class TelemetrySchedule(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ enabled:bool
+ source:Literal['local','tuya-cloud']
+ interval_seconds:int=Field(ge=15,le=86400)
+
+@app.put(API+'/devices/{id}/telemetry-schedule',dependencies=[Depends(auth)],tags=['Telemetry'])
+async def configure_telemetry_schedule(id:str,body:TelemetrySchedule):
+ d=find(id)
+ if not sensor_view(store,d):raise HTTPException(422,detail='此設備尚未提供感測數值')
+ if body.source=='tuya-cloud':
+  if body.interval_seconds<60:raise HTTPException(422,detail='Tuya 雲端更新間隔至少 60 秒')
+  c=store.secret('tuya-cloud');allowed={x['id'] for x in store.secret('tuya-cloud-devices').get('devices',[])}
+  if body.enabled and (d['adapter']!='tuya' or not c.get('api_key') or not c.get('api_secret') or d.get('config',{}).get('device_id') not in allowed):raise HTTPException(409,detail='此設備尚未完成 Tuya 雲端授權')
+ store.put('settings','sensor-refresh:'+id,body.model_dump())
+ runtime=store.one('settings','sensor-refresh-runtime:'+id,{})
+ # Saving does not perform an upstream request. The background worker picks it up.
+ store.put('settings','sensor-refresh-runtime:'+id,{**runtime,'next_run_at':time.time() if body.enabled else None,'failures':0,'last_error':None})
+ store.event('telemetry.schedule.updated',{'device_id':id,'message':'已更新背景讀取設定'})
+ return schedule_view(store,d)
 
 @app.get(API+'/devices/{id}/readings',dependencies=[Depends(auth)],tags=['Telemetry'])
 async def readings(id:str,metric:str,hours:int=24):

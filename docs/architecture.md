@@ -89,3 +89,13 @@ curl -X POST http://MAC_IP:8788/api/v1/devices/DEVICE_ID/commands \
 SQLite readings 以設備／指標／時間／來源去重，僅保存非空值。成功接收時記錄，30 天以前資料在下一次寫入清除（最多每小時整理一次）。歷史多於 360 點時等距選取原始點，保留首尾，不做平均或插值；超過 3 分鐘的間隔與不同來源不連線。重啟後歷史保留，服務尚未取得的過去數值不回填。
 
 Tuya 快照只使用 GET token/status，HTTPS 固定資料中心白名單，不允許重新導向；憑證與 token 不寫入 telemetry、歷史或前端。僅能查詢先前帳號授權匯入的設備 ID。失敗也記錄查詢間隔以避免連續消耗；不送控制指令、不自動開通服務、不處理付費升級。
+
+## 背景讀取排程
+
+`PUT /devices/{id}/telemetry-schedule` 設定 `{enabled, source, interval_seconds}`，source 為 local 或 tuya-cloud。local 使用既有轉接器（含已接入的 LG／HA 服務），限制 15～86,400 秒；Tuya 雲端至少 60 秒，僅允許已授權設備。停用不受雲端憑證是否仍有效限制；已送出的讀取可完成，但不再安排下一次。
+
+GET /telemetry 的各 item.auto_update 含設定、last_attempt_at、last_success_at、next_run_at、last_error、failures、estimated_status_queries_per_day；頂層 background_running 表示服務是否正在排程。
+
+排程在 FastAPI lifespan 執行，不由瀏覽器計時器觸發。每台僅一個待執行／執行中工作，最多十台並行，共用閘道的工作序列化。沒有自訂設定時保持既有 35 秒區網讀取。設定可按台暫停，手動讀取仍可用。設定及下次執行時間保存在 SQLite，重啟或喚醒不補送積欠查詢。完成後開始下一段間隔；雲端失敗依 2 倍、4 倍等退避，最多一小時（原設定更長時維持原間隔）。失敗保留舊值與歷史。
+
+每日雲端查詢估算為 ceil(86400 / interval_seconds)，僅估計此設備狀態查詢，不含認證、手動查詢、服務中斷或退避。手動與排程共用至少 60 秒的限制，沒有自動付費升級或新增服務。

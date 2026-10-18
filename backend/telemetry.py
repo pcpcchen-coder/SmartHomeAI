@@ -3,6 +3,7 @@ import asyncio, hashlib, hmac, math, time
 from urllib.parse import quote
 import httpx
 from .adapters import AdapterError
+from .telemetry_scheduler import schedule_view
 
 # code: stable key, label, default unit, decimal places, group
 SPECS={
@@ -59,6 +60,11 @@ def metrics_for(device, state):
    except (ValueError,TypeError):pass
  return rows
 
+def cloud_linked(store,device):
+ if device['adapter']!='tuya' or not device.get('config',{}).get('mapping'):return False
+ credentials=store.secret('tuya-cloud')
+ return bool(credentials.get('api_key') and credentials.get('api_secret') and device.get('config',{}).get('device_id') in {x['id'] for x in store.secret('tuya-cloud-devices').get('devices',[])})
+
 def sensor_view(store, device):
  state=store.one('state',device['id'],{});lan=metrics_for(device,state)
  snapshot=store.one('settings','sensor-cloud:'+device['id'],{})
@@ -70,10 +76,10 @@ def sensor_view(store, device):
  has_values=any(m['value'] is not None for m in rows)
  live=not use_cloud and state.get('fresh') and state.get('available') and age is not None and age<90
  status='live' if live and has_values else 'snapshot' if use_cloud and has_values and age<900 else 'stale' if has_values else 'missing'
- return {'id':device['id'],'name':device['name'],'kind':device['kind'],'room_id':(device.get('placement') or {}).get('room_id'),'ips':device.get('ips',[]),'metrics':rows,'status':status,'received_at':at,'measurement_at':None,'source':'tuya-cloud-snapshot' if use_cloud else state.get('source'),'source_label':'Tuya 雲端快照' if use_cloud else {'tuya-lan':'Tuya 區網','tuya-gateway-lan':'Tuya 閘道','lg-thinq-cloud':'LG ThinQ','lg-thinq':'LG ThinQ','home-assistant':'Home Assistant'}.get(state.get('source'),'尚無讀值' if not at else state.get('source','本機觀測')),'error':None if live else state.get('error'),'cloud_supported':device['adapter']=='tuya' and bool(device.get('config',{}).get('mapping')),'last_cloud_attempt':store.one('settings','sensor-cloud-attempt:'+device['id'],{}).get('at')}
+ return {'auto_update':schedule_view(store,device),'id':device['id'],'name':device['name'],'kind':device['kind'],'room_id':(device.get('placement') or {}).get('room_id'),'ips':device.get('ips',[]),'metrics':rows,'status':status,'received_at':at,'measurement_at':None,'source':'tuya-cloud-snapshot' if use_cloud else state.get('source'),'source_label':'Tuya 雲端快照' if use_cloud else {'tuya-lan':'Tuya 區網','tuya-gateway-lan':'Tuya 閘道','lg-thinq-cloud':'LG ThinQ','lg-thinq':'LG ThinQ','home-assistant':'Home Assistant'}.get(state.get('source'),'尚無讀值' if not at else state.get('source','本機觀測')),'error':None if live else state.get('error'),'cloud_supported':cloud_linked(store,device),'last_cloud_attempt':store.one('settings','sensor-cloud-attempt:'+device['id'],{}).get('at')}
 
 class CloudSnapshots:
- """Read-only, explicit requests; no scheduled cloud polling or cloud commands."""
+ """Read-only status requests shared by manual queries and the background scheduler."""
  def __init__(self):self.lock=asyncio.Lock();self.tokens={}
  async def fetch(self, store, device):
   c=store.secret('tuya-cloud');did=device.get('config',{}).get('device_id')
