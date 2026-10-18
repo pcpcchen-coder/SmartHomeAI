@@ -55,3 +55,14 @@ def test_power_ownership_idempotency_and_unconfirmed(tmp_path):
   assert await a.ac_power(s,'owned','ac',True,'one')==r and calls==[True]
   with pytest.raises(AdapterError):await a.ac_power(s,'owned','ac',False,'one')
  asyncio.run(run());s.db.close()
+
+def test_climate_profile_encoding_and_rejection():
+ from backend.aifa_climate import encode,decode,capabilities
+ v={'mode':'cool','temperature':26,'fan':'auto','swing':'auto','feature':'normal'}
+ assert encode('173',v)=='ffa0060173260020010100000000f0'
+ assert encode('173',{**v,'temperature':20}).startswith('ffa007017320')
+ assert decode(bytes.fromhex('fea00173260020010100000000f0'))['temperature']==26
+ assert decode(bytes.fromhex('fea00173000000000000000000f0'))['power'] is False
+ assert capabilities('173')['modes']==['auto','cool','dry']
+ for change in [{'temperature':True},{'temperature':31},{'mode':'heat'},{'feature':'invalid'}]:
+  with pytest.raises(AdapterError):encode('173',{**v,**change})

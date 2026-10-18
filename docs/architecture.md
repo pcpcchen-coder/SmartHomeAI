@@ -129,3 +129,5 @@ GET /telemetry 的各 item.auto_update 含設定、last_attempt_at、last_succes
 官方文件：[服務與 API 清單](https://developer.tuya.com/en/docs/cloud/ir-control-hub-open-service?id=Kb3oe2mk8ya72)、[家電清單](https://developer.tuya.com/en/docs/cloud/791872dd27?id=Kb3oe4qw98wmm)、[實際按鍵](https://developer.tuya.com/en/docs/cloud/ff7882b8a5?id=Kb3oe37sqdjx5)、[送出按鍵](https://developer.tuya.com/en/docs/cloud/d59591e9f6?id=Kb3oe4hspk8bi)。
 
 AIFA 已擴充 type=0/subType=0 冷氣的手動開機與關機，以及控制器狀態查詢。使用驗證憑證的 TLS aifaremote.com:8751，MAC 與 token 握手必須成功。`POST /integrations/aifa/devices/{hub}/children/{child}/status` 只查詢；同路徑 `/power` 接收嚴格布林 power 與必填 Idempotency-Key。僅接受 24 小時內帳號清單中的家電，控制序列化、兩秒間隔，不自動重送。指令結果始終為 unconfirmed，控制器狀態另列，不能宣稱冷氣實際動作完成。溫度／模式／風速尚未接入。
+
+冷氣完整設定：POST /integrations/aifa/devices/{hub}/children/{child}/climate，必填 Idempotency-Key。僅接受清單中的設定碼 173；mode=auto/cool/dry，temperature=17..30 整數，fan=auto/low/medium/high，swing=auto/fixed_1..fixed_5，feature=normal/sleep/turbo/energy_saving。完整驗證後才編碼傳送，不自動重送；定時、防霉尚未確認。控制器回報解析出模式、溫度、風速、方向與特殊模式，不宣稱是實體冷氣感測回饋。

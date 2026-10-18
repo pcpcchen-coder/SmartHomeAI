@@ -223,6 +223,21 @@ async def aifa_ac_power(hub:str,child:str,body:AifaPower,request:Request):
  try:return await aifa_account.ac_power(store,hub,child,body.power,idem)
  except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
 
+class AifaClimate(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ mode:Literal['auto','cool','dry']
+ temperature:int=Field(ge=17,le=30)
+ fan:Literal['auto','low','medium','high']
+ swing:Literal['auto','fixed_1','fixed_2','fixed_3','fixed_4','fixed_5']
+ feature:Literal['normal','sleep','turbo','energy_saving']='normal'
+
+@app.post(API+'/integrations/aifa/devices/{hub}/children/{child}/climate',dependencies=[Depends(auth)],tags=['Integrations'])
+async def aifa_climate(hub:str,child:str,body:AifaClimate,request:Request):
+ idem=request.headers.get('idempotency-key')
+ if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
+ try:return await aifa_account.ac_power(store,hub,child,None,idem,settings=body.model_dump())
+ except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
+
 class ExternalMatch(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)
  device_id:str

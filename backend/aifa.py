@@ -5,6 +5,7 @@ No third-party package is executed; only the vendor HTTPS host receives credenti
 import asyncio,time
 import httpx
 from .adapters import AdapterError
+from .aifa_climate import capabilities,encode,decode
 
 HOST='https://api.aifaremote.com'
 CLIENT_ID='Ecp5TUQxtOjdQ24u' # Public AIFA application identifier; not a user credential.
@@ -66,7 +67,7 @@ class AifaAccount:
      children=[]
      for sub in row.get('subDevices',row.get('sub_devices',[])) or []:
       if not isinstance(sub,dict) or sub.get('id',sub.get('subDeviceId')) is None:continue
-      children.append({'id':str(sub.get('id',sub.get('subDeviceId'))),'name':str(sub.get('name',sub.get('deviceName','未命名家電')))[:80],'type':str(sub.get('type',''))[:80],'sub_type':str(sub.get('subType',''))[:20]})
+      children.append({'id':str(sub.get('id',sub.get('subDeviceId'))),'name':str(sub.get('name',sub.get('deviceName','未命名家電')))[:80],'type':str(sub.get('type',''))[:80],'sub_type':str(sub.get('subType',''))[:20],'device_code':str(sub.get('deviceCode',''))[:20],'capabilities':capabilities(sub.get('deviceCode'))})
      items.append({'id':str(ident),'name':str(row.get('deviceName',row.get('name','AIFA 控制器')))[:80],'mac':mac,'online':row.get('online') if isinstance(row.get('online'),bool) else None,'matched_device_id':matches[0]['id'] if len(matches)==1 else None,'children':children})
     store.put('settings','aifa-discovery',{'attempted_at':time.time(),'queried_at':time.time(),'items':items,'error':None})
     store.event('aifa.discovered',{'message':'已讀取 AIFA 控制器與家電清單'})
@@ -83,7 +84,7 @@ class AifaAccount:
   device=next((x for x in cache.get('items',[]) if x['id']==hub),None)
   if not device or not any(x['id']==child and x['type']=='0' for x in device['children']):raise AdapterError('aifa_owned','找不到已授權的 AIFA 冷氣')
   return device
- async def ac_exchange(self,store,device,power=None,on_send=None):
+ async def ac_exchange(self,store,device,power=None,on_send=None,packet=None):
   import ssl
   secret=store.secret('aifa')
   if not secret.get('access_token') or time.time()>secret.get('expires_at',0)-30:raise AdapterError('aifa_auth','請先重新讀取家電以更新 AIFA 授權')
@@ -93,9 +94,9 @@ class AifaAccount:
    writer.write(bytes.fromhex('a1fad7c0')+__import__('json').dumps({'mac':device['mac'],'token':secret['access_token']},separators=(',',':')).encode());await writer.drain()
    ack=await asyncio.wait_for(reader.read(32),3)
    if ack[:1]!=b'\x00':raise AdapterError('aifa_auth','AIFA 控制連線未接受授權')
-   if power is not None:
+   if power is not None or packet is not None:
     if on_send:on_send()
-    sent=True;writer.write(bytes.fromhex('ffa0a1f0' if power else 'ffa0a2f0'));await writer.drain()
+    sent=True;writer.write(bytes.fromhex(packet or ('ffa0a1f0' if power else 'ffa0a2f0')));await writer.drain()
     await asyncio.sleep(1)
    writer.write(bytes.fromhex('fff3f2a0f0'));await writer.drain();data=ack[1:];deadline=time.monotonic()+3
    while time.monotonic()<deadline:
@@ -107,7 +108,7 @@ class AifaAccount:
    status=None
    if packets:
     p=packets[-1];off=p[4]==0 and p[6]==0
-    status={'power':not off,'received_at':time.time(),'source':'aifa-controller-reported','physical_feedback':False}
+    status={**decode(p),'received_at':time.time(),'source':'aifa-controller-reported','physical_feedback':False}
     store.put('settings','aifa-ac-status:'+device['id'],status)
    return {'sent':sent,'status':status}
   except AdapterError:raise
@@ -123,10 +124,10 @@ class AifaAccount:
   async with self.lock:
    d=self.owned_child(store,hub,child)
    return await self.ac_exchange(store,d)
- async def ac_power(self,store,hub,child,power,idem):
+ async def ac_power(self,store,hub,child,power,idem,settings=None):
   import uuid
   async with self.lock:
-   d=self.owned_child(store,hub,child);key='aifa:'+hub+':'+child;req={'command':'power','value':power};previous=store.command(key,idem)
+   d=self.owned_child(store,hub,child);key='aifa:'+hub+':'+child;req={'command':'climate','settings':settings} if settings is not None else {'command':'power','value':power};previous=store.command(key,idem)
    if previous:
     if previous['request']!=req:raise AdapterError('idempotency_conflict','相同指令識別碼不可用於不同內容')
     return previous['result']
@@ -135,7 +136,9 @@ class AifaAccount:
    ident=str(uuid.uuid4());result={'id':ident,'status':'accepted','message':'AIFA 指令處理中'};store.save_command(ident,key,idem,req,result)
    def mark_send():store.put('settings','aifa-last-send',{'at':time.time()})
    try:
-    reply=await self.ac_exchange(store,d,power,on_send=mark_send)
+    profile=next(x for x in d['children'] if x['id']==child)
+    packet=encode(profile.get('device_code'),settings) if settings is not None else None
+    reply=await self.ac_exchange(store,d,power,on_send=mark_send,**({'packet':packet} if packet else {}))
     result.update(status='unconfirmed',controller_status=reply['status'],message='已透過 AIFA 連線送出；控制器狀態不代表冷氣實際反應，請現場確認')
    except AdapterError as e:result.update(status='failed',message=e.message)
    store.save_command(ident,key,idem,req,result);store.event('command.'+result['status'],{'command_id':ident,'name':d['name'],'message':result['message'],'command':'aifa-power'})
