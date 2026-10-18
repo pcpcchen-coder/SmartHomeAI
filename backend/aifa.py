@@ -1,4 +1,4 @@
-"""Opt-in, read-only AIFA Smart compatibility client.
+"""Opt-in AIFA Smart compatibility client.
 Protocol reference: https://github.com/PinLin/aifa-smart-homeassistant (MIT).
 No third-party package is executed; only the vendor HTTPS host receives credentials.
 """
@@ -36,6 +36,15 @@ class AifaAccount:
   try:expires=max(0,float(reply.get('expires_in',3600)))
   except (ValueError,TypeError):expires=3600
   store.set_secret('aifa',{'access_token':reply['access_token'],'refresh_token':reply.get('refresh_token') or (previous or {}).get('refresh_token'),'expires_at':time.time()+expires})
+ async def ensure_token(self,store):
+  # Call only while holding self.lock. Refresh before reads AND writes.
+  secret=store.secret('aifa')
+  if not secret.get('access_token'):raise AdapterError('aifa_auth','請先連結 AIFA Smart 帳號')
+  if time.time()>=secret.get('expires_at',0)-60:
+   if not secret.get('refresh_token'):raise AdapterError('aifa_auth','AIFA 授權已到期，請重新登入')
+   result=await self.request('POST','/oauth2/token',{'client_id':CLIENT_ID,'grant_type':'refresh_token','refresh_token':secret['refresh_token']})
+   self.save_tokens(store,result,secret);secret=store.secret('aifa')
+  return secret
  async def login(self,store,email,password):
   async with self.lock:
    attempt=store.one('settings','aifa-login-attempt',{}).get('at',0)
@@ -52,11 +61,7 @@ class AifaAccount:
    if time.time()-old.get('attempted_at',0)<60:raise AdapterError('aifa_cooldown','AIFA 清單同步至少相隔 60 秒')
    store.put('settings','aifa-discovery',{**old,'attempted_at':time.time()})
    try:
-    secret=store.secret('aifa')
-    if not secret.get('access_token'):raise AdapterError('aifa_auth','請先連結 AIFA Smart 帳號')
-    if time.time()>=secret.get('expires_at',0)-60:
-     if not secret.get('refresh_token'):raise AdapterError('aifa_auth','AIFA 授權已到期，請重新登入')
-     self.save_tokens(store,await self.request('POST','/oauth2/token',{'client_id':CLIENT_ID,'grant_type':'refresh_token','refresh_token':secret['refresh_token']}),secret);secret=store.secret('aifa')
+    secret=await self.ensure_token(store)
     data=await self.request('GET','/devices',token=secret['access_token']);items=[]
     for row in rows(data,'devices','data','items'):
      if not isinstance(row,dict):continue
@@ -86,8 +91,7 @@ class AifaAccount:
   return device
  async def ac_exchange(self,store,device,power=None,on_send=None,packet=None):
   import ssl
-  secret=store.secret('aifa')
-  if not secret.get('access_token') or time.time()>secret.get('expires_at',0)-30:raise AdapterError('aifa_auth','請先重新讀取家電以更新 AIFA 授權')
+  secret=await self.ensure_token(store)
   writer=None;sent=False
   try:
    reader,writer=await asyncio.wait_for(asyncio.open_connection('aifaremote.com',8751,ssl=ssl.create_default_context(),server_hostname='aifaremote.com'),5)
@@ -107,7 +111,7 @@ class AifaAccount:
    packets=[data[i:i+14] for i in range(max(0,len(data)-13)) if data[i:i+2]==b'\xfe\xa0' and data[i+13]==0xf0]
    status=None
    if packets:
-    p=packets[-1];off=p[4]==0 and p[6]==0
+    p=packets[-1]
     status={**decode(p),'received_at':time.time(),'source':'aifa-controller-reported','physical_feedback':False}
     store.put('settings','aifa-ac-status:'+device['id'],status)
    return {'sent':sent,'status':status}
@@ -124,7 +128,7 @@ class AifaAccount:
   async with self.lock:
    d=self.owned_child(store,hub,child)
    return await self.ac_exchange(store,d)
- async def ac_power(self,store,hub,child,power,idem,settings=None):
+ async def ac_power(self,store,hub,child,power,idem,settings=None,on_accept=None):
   import uuid
   async with self.lock:
    d=self.owned_child(store,hub,child);key='aifa:'+hub+':'+child;req={'command':'climate','settings':settings} if settings is not None else {'command':'power','value':power};previous=store.command(key,idem)
@@ -138,6 +142,7 @@ class AifaAccount:
    try:
     profile=next(x for x in d['children'] if x['id']==child)
     packet=encode(profile.get('device_code'),settings) if settings is not None else None
+    if on_accept:on_accept()
     reply=await self.ac_exchange(store,d,power,on_send=mark_send,**({'packet':packet} if packet else {}))
     result.update(status='unconfirmed',controller_status=reply['status'],message='已透過 AIFA 連線送出；控制器狀態不代表冷氣實際反應，請現場確認')
    except AdapterError as e:result.update(status='failed',message=e.message)

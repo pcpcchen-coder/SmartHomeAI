@@ -16,11 +16,13 @@ from .telemetry import metrics_for, sensor_view, CloudSnapshots
 from .telemetry_scheduler import TelemetryScheduler, schedule_view
 from .infrared import Infrared, controller_type, ir_view
 from .aifa import AifaAccount, account_view
+from .native_ir import NativeIR
+from .ac_timers import ACTimers, timer_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount()
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);ac_timers=None
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -94,10 +96,15 @@ async def refresh_all():
 
 @asynccontextmanager
 async def lifespan(app):
- global telemetry_scheduler
- initialize();telemetry_scheduler=TelemetryScheduler(store,cloud_snapshots,refresh_one)
+ global telemetry_scheduler,ac_timers
+ initialize();ac_timers=ACTimers(store,aifa_account,native_ir);telemetry_scheduler=TelemetryScheduler(store,cloud_snapshots,refresh_one)
  task=asyncio.create_task(telemetry_scheduler.run()) if os.environ.get('WULING_POLL','1')=='1' else None
+ ac_task=asyncio.create_task(ac_timers.run()) if os.environ.get('WULING_POLL','1')=='1' else None
  yield
+ if ac_task:
+  ac_task.cancel()
+  try:await ac_task
+  except asyncio.CancelledError:pass
  if task:
   task.cancel()
   try:await task
@@ -220,7 +227,9 @@ async def aifa_ac_status(hub:str,child:str):
 async def aifa_ac_power(hub:str,child:str,body:AifaPower,request:Request):
  idem=request.headers.get('idempotency-key')
  if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
- try:return await aifa_account.ac_power(store,hub,child,body.power,idem)
+ try:
+  cancel=(lambda:ac_timers.cancel(hub,child,reason='已由手動開關取消舊定時，避免重複關機')) if ac_timers else None
+  return await aifa_account.ac_power(store,hub,child,body.power,idem,on_accept=cancel)
  except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
 
 class AifaClimate(BaseModel):
@@ -237,6 +246,61 @@ async def aifa_climate(hub:str,child:str,body:AifaClimate,request:Request):
  if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
  try:return await aifa_account.ac_power(store,hub,child,None,idem,settings=body.model_dump())
  except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
+
+def ac_error(e):return HTTPException(429 if e.code.endswith('cooldown') else 409,detail=e.message)
+
+class NativeBegin(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ controller_id:str=Field(min_length=1,max_length=128)
+ kind:str=Field(min_length=1,max_length=32)
+ label:str|None=Field(default=None,min_length=1,max_length=40)
+class NativeVerify(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ verified:bool
+
+NATIVE_PATH=API+'/integrations/aifa/devices/{hub}/children/{child}/native-keys'
+@app.get(NATIVE_PATH,dependencies=[Depends(auth)],tags=['Infrared Learning'])
+async def native_view(hub:str,child:str):return native_ir.view(store,hub,child)
+@app.post(NATIVE_PATH+'/learn',dependencies=[Depends(auth)],tags=['Infrared Learning'])
+async def native_begin(hub:str,child:str,body:NativeBegin):
+ try:return await native_ir.begin(store,hub,child,body.controller_id,body.kind,body.label)
+ except AdapterError as e:raise ac_error(e)
+ except Exception:raise HTTPException(502,detail='學習模式未完成，既有原廠按鍵保留')
+@app.post(NATIVE_PATH+'/sessions/{ident}/{action}',dependencies=[Depends(auth)],tags=['Infrared Learning'])
+async def native_session_action(hub:str,child:str,ident:str,action:Literal['capture','save','cancel']):
+ try:return await getattr(native_ir,action)(store,hub,child,ident)
+ except AdapterError as e:raise ac_error(e)
+ except Exception:raise HTTPException(502,detail='原廠按鍵操作未完成；既有按鍵保留，沒有發送紅外線')
+@app.post(NATIVE_PATH+'/{kind}/send',dependencies=[Depends(auth)],tags=['Infrared Learning'])
+async def native_send(hub:str,child:str,kind:str,request:Request):
+ idem=request.headers.get('idempotency-key')
+ if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
+ try:
+  cancel=(lambda:ac_timers.cancel(hub,child,reason='已由原廠關機按鍵取消舊定時，避免中斷防霉行程')) if ac_timers and kind in ['anti_mold_off','immediate_off'] else None
+  return await native_ir.send(store,hub,child,kind,idem,on_accept=cancel)
+ except AdapterError as e:raise ac_error(e)
+@app.put(NATIVE_PATH+'/{kind}/verify',dependencies=[Depends(auth)],tags=['Infrared Learning'])
+async def native_verify(hub:str,child:str,kind:str,body:NativeVerify):
+ try:return await native_ir.verify(store,hub,child,kind,body.verified)
+ except AdapterError as e:raise ac_error(e)
+
+class AcTimerBody(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ delay_seconds:int=Field(ge=60,le=86400)
+ action:Literal['on','off','native_off']
+TIMERS_PATH=API+'/integrations/aifa/devices/{hub}/children/{child}/timers'
+@app.get(TIMERS_PATH,dependencies=[Depends(auth)],tags=['AC Timers'])
+async def ac_timer_list(hub:str,child:str):return timer_view(store,hub,child)
+@app.post(TIMERS_PATH,dependencies=[Depends(auth)],tags=['AC Timers'])
+async def ac_timer_create(hub:str,child:str,body:AcTimerBody,request:Request):
+ idem=request.headers.get('idempotency-key')
+ if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
+ try:return ac_timers.schedule(hub,child,body.action,body.delay_seconds,idem)
+ except AdapterError as e:raise ac_error(e)
+@app.delete(TIMERS_PATH+'/{ident}',dependencies=[Depends(auth)],tags=['AC Timers'])
+async def ac_timer_cancel(hub:str,child:str,ident:str):
+ try:return ac_timers.cancel(hub,child,ident)
+ except AdapterError as e:raise ac_error(e)
 
 class ExternalMatch(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)

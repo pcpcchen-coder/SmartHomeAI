@@ -51,7 +51,7 @@ macOS 預設資料目錄為 `~/Library/Application Support/WulingHomeControl/`�
 
 設備詳情可設定接入與憑證。Tuya 帳號授權匯入由 `backend/tuya_import.py` 提供程式介面，尚無完整的雲端專案設定精靈。金鑰留在本機 Fernet 加密區，不會傳至前端；解密金鑰與主權杖檔權限 0600、資料夾 0700。這是本機檔案加密，並非硬體金鑰保護。
 
-紅外線控制需另行授權 IR Control Hub Open Service；介面不會自動開通或購買服務，API 消耗既有雲端資源。同步至少相隔 60 秒，按鍵快取保留 24 小時。只可發送最近從已授權控制器同步出的按鍵，同一控制器至少相隔一秒。雲端接受時顯示「請確認實際反應」，逾時不會自動重送，也不產生虛假的開關狀態。AIFA Smart 提供選用的社群相容帳號連結，可讀取控制器與家電清單，並提供相容冷氣的基本開關與控制器狀態查詢；溫度、模式、風速尚未接入；eWeLink 介面顯示認證與授權步驟，尚待專屬憑證完成接入；Google Home 外部名稱對應不等同 Google Home 控制橋接。
+紅外線控制需另行授權 IR Control Hub Open Service；介面不會自動開通或購買服務，API 消耗既有雲端資源。同步至少相隔 60 秒，按鍵快取保留 24 小時。只可發送最近從已授權控制器同步出的按鍵，同一控制器至少相隔一秒。雲端接受時顯示「請確認實際反應」，逾時不會自動重送，也不產生虛假的開關狀態。AIFA Smart 提供選用的社群相容帳號連結，可讀取控制器與家電清單，並提供相容冷氣的電源、溫度、模式、風速、擺風及進階設定；另有持久化背景定時與 Tuya 原廠按鍵學習，實體效果需現場確認；eWeLink 介面顯示認證與授權步驟，尚待專屬憑證完成接入；Google Home 外部名稱對應不等同 Google Home 控制橋接。
 
 一般雙向控制前驗證能力與狀態，送出後回讀並回報 `confirmed / unconfirmed / failed`。回讀符合指令不代表所有機械動作已完成；不可用網路在線推論家電可控制。
 
@@ -66,6 +66,8 @@ macOS 預設資料目錄為 `~/Library/Application Support/WulingHomeControl/`�
 
 測試使用通用示例與假轉接器，無須家中設備。涵蓋登入、來源檢查、指令冪等／回讀、三路開關、資料持久化、感測換算、雲端簽章／授權／查詢間隔、歷史去重及來源標示。
 
-[架構與 API 合約](docs/architecture.md) 說明外部系統接入；執行服務後可查看 `/api/docs`。目前沒有使用者角色、排程／情境引擎、自動 DHCP 追蹤與通用 Google Home 控制橋接。
+[架構與 API 合約](docs/architecture.md) 說明外部系統接入；執行服務後可查看 `/api/docs`。提供單台冷氣一次性定時，目前沒有使用者角色、通用情境引擎、自動 DHCP 追蹤與通用 Google Home 控制橋接。
 
 `macos/main.swift` 與 `scripts/build_mac_app.py` 可建立獨立 WebKit 視窗。打包版仍依賴指定的 Python 3.12 路徑，並非可攜至任意 Mac 的通用安裝包；打包需額外安裝 PyMuPDF、Xcode Command Line Tools，且目標 App 不可已存在。現有 App 的私人資產不在本儲存庫。
+
+冷氣的原廠清淨、乾燥防霉等功能可從「完整遙控器 → 原廠專用」學習；已確認的原廠防霉關機可用於中控背景定時。詳見 [Panasonic 調查與操作說明](docs/panasonic-drying.md)。

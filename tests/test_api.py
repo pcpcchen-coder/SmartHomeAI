@@ -264,3 +264,19 @@ def test_aifa_login_auth_local_only_and_password_validation_redacted(ctx):
   response=remote.post('/api/v1/integrations/aifa/login',headers={'Authorization':'Bearer '+s.master_token},json={'email':'fixture@example.test','password':'secret'})
   assert response.status_code==403
  assert c.get('/api/v1/integrations/ewelink').json()['connected'] is False
+
+
+def test_ac_timer_and_learning_routes_validate_without_actuation(ctx):
+ c,s,a,d=ctx
+ s.put('settings','aifa-discovery',{'queried_at':time.time(),'items':[{'id':'hub','name':'示例控制器','mac':'aabbccddeeff','children':[{'id':'ac','type':'0','sub_type':'0'}]}]})
+ base='/api/v1/integrations/aifa/devices/hub/children/ac'
+ assert c.get(base+'/native-keys').status_code==200
+ assert c.post(base+'/timers',json={'action':'off','delay_seconds':60}).status_code==422
+ headers={'Idempotency-Key':'test-timer'}
+ assert c.post(base+'/timers',json={'action':'off','delay_seconds':True},headers=headers).status_code==422
+ r=c.post(base+'/timers',json={'action':'off','delay_seconds':60},headers=headers);assert r.status_code==200
+ assert c.post(base+'/timers',json={'action':'off','delay_seconds':60},headers=headers).json()==r.json()
+ result=c.delete(base+'/timers/'+r.json()['id']);assert result.json()['items'][0]['status']=='cancelled'
+ assert c.post(base+'/native-keys/learn',json={'controller_id':'bad','kind':'invalid'}).status_code==409
+ assert c.put(base+'/native-keys/anti_mold_off/verify',json={'verified':True}).status_code==409
+ assert not a.sent

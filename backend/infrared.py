@@ -8,7 +8,9 @@ HOSTS={'us':'openapi.tuyaus.com','az':'openapi.tuyaus.com','us-e':'openapi-ueaz.
 class TuyaIRCloud:
  def __init__(self):self.lock=asyncio.Lock();self.tokens={}
  async def request(self,store,method,path,body=None):
-  if method not in ['GET','POST'] or not re.fullmatch(r'/v2\.0/infrareds/[A-Za-z0-9_-]+/remotes(?:/[A-Za-z0-9_-]+/(?:keys|raw/command))?',path):raise AdapterError('invalid_ir_path','紅外線介接路徑無效')
+  base=r'/v2\.0/infrareds/[A-Za-z0-9_-]+'
+  allowed=(method in ['GET','POST'] and re.fullmatch(base+r'/remotes(?:/[A-Za-z0-9_-]+/(?:keys|raw/command))?',path)) or (method=='PUT' and re.fullmatch(base+r'/learning-state\?state=(?:true|false)',path)) or (method=='GET' and re.fullmatch(base+r'/learning-codes\?learning_time=[0-9]{1,16}',path)) or (method=='POST' and re.fullmatch(base+r'/learning-codes',path)) or (method in ['GET','POST','PUT'] and re.fullmatch(base+r'/remotes/[A-Za-z0-9_-]+/learning-codes',path))
+  if not allowed:raise AdapterError('invalid_ir_path','紅外線介接路徑無效')
   c=store.secret('tuya-cloud');host=HOSTS.get(c.get('region'))
   if not host or not c.get('api_key') or not c.get('api_secret'):raise AdapterError('cloud_not_linked','尚未設定 Tuya 雲端認證')
   async with self.lock:
