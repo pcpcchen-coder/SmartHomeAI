@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useState,useRef} from 'react';
 import {Activity,ArrowUpRight,Battery,CloudDownload,Clock,Droplets,Gauge,RefreshCw,Search,ShieldAlert,Thermometer,Wind,Zap} from 'lucide-react';
 import './telemetry.css';
 
@@ -14,14 +14,16 @@ export function SensorReadings({sensor:s}){
 }
 
 function Trend({data,metric,hours}){
+ const host=useRef(),[width,setWidth]=useState(720);
+ useEffect(()=>{if(!host.current)return;const observer=new ResizeObserver(([entry])=>setWidth(Math.max(260,Math.min(720,entry.contentRect.width))));observer.observe(host.current);return()=>observer.disconnect()},[data?.points?.length]);
  if(!data?.points?.length)return <div className="trend-empty"><Activity size={24}/><strong>等待第一筆紀錄</strong><span>讀取設備後開始累積，保留最近 30 天資料。</span></div>;
  const points=data.points.filter(p=>p.unit===metric.unit);
  const numeric=points.filter(p=>typeof p.value==='number'&&Number.isFinite(p.value));
  if(!numeric.length)return <div className="reading-events">{points.slice(-8).reverse().map((p,i)=><div key={p.at+':'+i}><span>{stamp(p.at)}</span><strong>{p.value}</strong><small>{p.source.includes('cloud')?'雲端查詢':'本機接收'}</small></div>)}</div>;
- const width=720,height=190,pad=36,now=Date.now()/1000,start=now-hours*3600,minimum=Math.min(...numeric.map(p=>p.value)),maximum=Math.max(...numeric.map(p=>p.value)),spread=maximum-minimum||Math.max(Math.abs(maximum)*.05,1),low=minimum-spread*.12,high=maximum+spread*.12;
+ const height=190,pad=36,now=Date.now()/1000,start=now-hours*3600,minimum=Math.min(...numeric.map(p=>p.value)),maximum=Math.max(...numeric.map(p=>p.value)),spread=maximum-minimum||Math.max(Math.abs(maximum)*.05,1),low=minimum-spread*.12,high=maximum+spread*.12;
  const coords=numeric.map(p=>({...p,x:pad+Math.max(0,Math.min(1,(p.at-start)/(now-start)))*(width-pad*2),y:height-pad-(p.value-low)/(high-low)*(height-pad*2)}));
  let paths=[],segment=[];for(const p of coords){if(segment.length&&(p.at-segment.at(-1).at>180||p.source!==segment.at(-1).source)){paths.push(segment);segment=[]}segment.push(p)}if(segment.length)paths.push(segment);
- return <div className="trend-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${metric.label}最近${hours}小時的實際接收或查詢紀錄`}><title>{metric.label}歷史紀錄</title>{[0,.5,1].map((v,i)=><g key={v}><line x1={pad} x2={width-pad} y1={pad+v*(height-pad*2)} y2={pad+v*(height-pad*2)}/><text x={pad-8} y={pad+v*(height-pad*2)+4} textAnchor="end">{(high-v*(high-low)).toLocaleString('zh-TW',{maximumFractionDigits:metric.precision||0})}</text></g>)}{paths.map((p,i)=><polyline key={i} points={p.map(x=>`${x.x},${x.y}`).join(' ')}/>)}{coords.map((p,i)=><circle key={p.at+':'+i} cx={p.x} cy={p.y} r={coords.length<25?3.5:1.8}><title>{stamp(p.at)} · {p.value} {p.unit} · {p.source}</title></circle>)}<text x={pad} y={height-8}>{stamp(start)}</text><text x={width-pad} y={height-8} textAnchor="end">{stamp(now)}</text></svg><div className="trend-foot"><span>共 {data.total_samples} 筆實際紀錄{data.total_samples>points.length?' · 圖表已抽樣':''}</span><span>{metric.unit||'裝置狀態'} · 超過 3 分鐘的缺口不連線</span></div></div>
+ return <div className="trend-chart" ref={host}><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${metric.label}最近${hours}小時的實際接收或查詢紀錄`}><title>{metric.label}歷史紀錄</title>{[0,.5,1].map((v,i)=><g key={v}><line x1={pad} x2={width-pad} y1={pad+v*(height-pad*2)} y2={pad+v*(height-pad*2)}/><text x={pad-8} y={pad+v*(height-pad*2)+4} textAnchor="end">{(high-v*(high-low)).toLocaleString('zh-TW',{maximumFractionDigits:metric.precision||0})}</text></g>)}{paths.map((p,i)=><polyline key={i} points={p.map(x=>`${x.x},${x.y}`).join(' ')}/>)}{coords.map((p,i)=><circle key={p.at+':'+i} cx={p.x} cy={p.y} r={coords.length<25?3.5:1.8}><title>{stamp(p.at)} · {p.value} {p.unit} · {p.source}</title></circle>)}<text x={pad} y={height-8}>{stamp(start)}</text><text x={width-pad} y={height-8} textAnchor="end">{stamp(now)}</text></svg><div className="trend-foot"><span>共 {data.total_samples} 筆實際紀錄{data.total_samples>points.length?' · 圖表已抽樣':''}</span><span>{metric.unit||'裝置狀態'} · 超過 3 分鐘的缺口不連線</span></div></div>
 }
 
 export default function TelemetryDashboard({api,notify,rooms,room,onRoom,onDevice}){
