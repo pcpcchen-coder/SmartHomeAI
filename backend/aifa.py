@@ -87,7 +87,7 @@ class AifaAccount:
   cache=store.one('settings','aifa-discovery',{})
   if not cache.get('queried_at') or time.time()-cache['queried_at']>86400:raise AdapterError('aifa_stale','請先重新讀取 AIFA 家電清單')
   device=next((x for x in cache.get('items',[]) if x['id']==hub),None)
-  if not device or not any(x['id']==child and x['type']=='0' for x in device['children']):raise AdapterError('aifa_owned','找不到已授權的 AIFA 冷氣')
+  if not device or not any(x['id']==child and x['type']=='0' and x.get('sub_type')=='0' for x in device['children']):raise AdapterError('aifa_owned','找不到已授權的 AIFA 冷氣')
   return device
  async def ac_exchange(self,store,device,power=None,on_send=None,packet=None):
   import ssl

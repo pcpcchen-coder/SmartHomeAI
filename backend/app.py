@@ -17,12 +17,13 @@ from .telemetry_scheduler import TelemetryScheduler, schedule_view
 from .infrared import Infrared, controller_type, ir_view
 from .aifa import AifaAccount, account_view
 from .native_ir import NativeIR
+from .aifa_native import AifaNative
 from .ac_timers import ACTimers, timer_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);ac_timers=None
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);aifa_native=AifaNative(aifa_account);ac_timers=None
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -248,6 +249,30 @@ async def aifa_climate(hub:str,child:str,body:AifaClimate,request:Request):
  except AdapterError as e:raise HTTPException(429 if e.code=='aifa_cooldown' else 409,detail=e.message)
 
 def ac_error(e):return HTTPException(429 if e.code.endswith('cooldown') else 409,detail=e.message)
+
+class AifaNativeVerify(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ command_id:str=Field(min_length=1,max_length=128)
+ verified:bool
+
+AIFA_NATIVE_PATH=API+'/integrations/aifa/devices/{hub}/children/{child}/native-mold'
+@app.get(AIFA_NATIVE_PATH,dependencies=[Depends(auth)],tags=['AIFA Native'])
+async def aifa_native_view(hub:str,child:str):
+ try:return aifa_native.view(store,hub,child)
+ except AdapterError as e:raise ac_error(e)
+@app.post(AIFA_NATIVE_PATH,dependencies=[Depends(auth)],tags=['AIFA Native'])
+async def aifa_native_send(hub:str,child:str,request:Request):
+ idem=request.headers.get('idempotency-key')
+ if not idem or len(idem)>128:raise HTTPException(422,detail='請提供唯一指令識別碼')
+ if await request.body():raise HTTPException(422,detail='防霉按鍵不接受其他控制參數')
+ try:
+  cancel=(lambda:ac_timers.cancel(hub,child,reason='已按下 AIFA 原廠防霉，取消舊定時以免中斷乾燥')) if ac_timers else None
+  return await aifa_native.send(store,hub,child,idem,on_accept=cancel)
+ except AdapterError as e:raise ac_error(e)
+@app.put(AIFA_NATIVE_PATH+'/verify',dependencies=[Depends(auth)],tags=['AIFA Native'])
+async def aifa_native_verify(hub:str,child:str,body:AifaNativeVerify):
+ try:return aifa_native.verify(store,hub,child,body.command_id,body.verified)
+ except AdapterError as e:raise ac_error(e)
 
 class NativeBegin(BaseModel):
  model_config=ConfigDict(extra='forbid',strict=True)

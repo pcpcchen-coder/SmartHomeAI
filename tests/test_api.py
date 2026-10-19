@@ -280,3 +280,22 @@ def test_ac_timer_and_learning_routes_validate_without_actuation(ctx):
  assert c.post(base+'/native-keys/learn',json={'controller_id':'bad','kind':'invalid'}).status_code==409
  assert c.put(base+'/native-keys/anti_mold_off/verify',json={'verified':True}).status_code==409
  assert not a.sent
+
+def test_aifa_native_route_requires_auth_owned_profile_and_idempotency(ctx,monkeypatch):
+ from backend.aifa import AifaAccount
+ from backend.aifa_native import AifaNative
+ c,s,_,_=ctx;a=AifaAccount();n=AifaNative(a);sent=[]
+ s.put('settings','aifa-discovery',{'queried_at':time.time(),'items':[{'id':'hub','name':'example','children':[{'id':'ac','type':'0','sub_type':'0','device_code':'19968'}]}]})
+ async def exchange(store,device,packet=None,on_send=None):
+  on_send();sent.append(packet);return {'sent':True,'status':None}
+ a.ac_exchange=exchange;monkeypatch.setattr(module,'aifa_native',n)
+ p='/api/v1/integrations/aifa/devices/hub/children/ac/native-mold'
+ assert c.get(p).json()['sender']=='aifa'
+ assert c.post(p).status_code==422
+ assert c.post(p,json={'packet':'unknown'},headers={'Idempotency-Key':'bad'}).status_code==422
+ assert c.put(p+'/verify',json={'command_id':'unknown','verified':True}).status_code==409
+ r=c.post(p,headers={'Idempotency-Key':'one'});assert r.status_code==200 and r.json()['status']=='unconfirmed'
+ assert c.post(p,headers={'Idempotency-Key':'one'}).json()['id']==r.json()['id']
+ assert sent==['ffa026f0']
+ assert c.put(p+'/verify',json={'command_id':r.json()['id'],'verified':True}).json()['verified']
+ c.headers.pop('Authorization');assert c.get(p).status_code==401 and c.post(p,headers={'Idempotency-Key':'unauthorized'}).status_code==401

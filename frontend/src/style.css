@@ -11,3 +11,5 @@
 .channel-list{margin:16px 0}.channel-list>div{min-height:36px;font-size:12px}.toggle{display:inline-flex;align-items:center;width:42px;height:25px;border-radius:20px;background:#dbe0d6;padding:3px;flex-shrink:0;transition:background .2s}.toggle i{display:block;width:19px;height:19px;border-radius:50%;background:white;box-shadow:0 1px 3px #0002;transition:transform .2s}.toggle.on{background:#587354}.toggle.on i{transform:translateX(17px)}.toggle:disabled{opacity:.4;cursor:wait}.toggle:focus-visible{outline:2px solid #35563c;outline-offset:3px}
 
 .channel-list .toggle{justify-content:flex-start}
+
+.ac-extra.aifa-native .aifa-native-ready{display:flex;align-items:flex-start;gap:10px;margin:20px 0;font-size:14px;line-height:1.7}.aifa-native-ready input{width:18px;height:18px;flex:0 0 18px;margin-top:4px}.aifa-native-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.aifa-native-head h3{margin:6px 0}.aifa-native-head small{font-size:10px;letter-spacing:.12em;color:var(--muted)}

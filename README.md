@@ -61,7 +61,7 @@ macOS 預設資料目錄為 `~/Library/Application Support/WulingHomeControl/`�
 
 ```sh
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest tests -q
 ```
 
 測試使用通用示例與假轉接器，無須家中設備。涵蓋登入、來源檢查、指令冪等／回讀、三路開關、資料持久化、感測換算、雲端簽章／授權／查詢間隔、歷史去重及來源標示。
@@ -70,4 +70,6 @@ macOS 預設資料目錄為 `~/Library/Application Support/WulingHomeControl/`�
 
 `macos/main.swift` 與 `scripts/build_mac_app.py` 可建立獨立 WebKit 視窗。打包版仍依賴指定的 Python 3.12 路徑，並非可攜至任意 Mac 的通用安裝包；打包需額外安裝 PyMuPDF、Xcode Command Line Tools，且目標 App 不可已存在。現有 App 的私人資產不在本儲存庫。
 
-冷氣的原廠清淨、乾燥防霉等功能可從「完整遙控器 → 原廠專用」學習；已確認的原廠防霉關機可用於中控背景定時。詳見 [Panasonic 調查與操作說明](docs/panasonic-drying.md)。
+冷氣的原廠清淨、乾燥防霉等功能可從「完整遙控器 → Tuya 按鍵學習」學習；已確認的原廠防霉關機可用於中控背景定時。詳見 [Panasonic 調查與操作說明](docs/panasonic-drying.md)。
+
+AIFA Smart 已套用 19968 且手機防霉按鈕有效時，可在「完整遙控器 → AIFA 防霉」透過 AIFA i-Ctrl 按下原廠防霉。這是單次按鍵，要求先確認冷氣完全停止，不自動重送、不安排十分鐘後關機；中控實測結果另外記錄。詳見 [AIFA 原廠防霉接入](docs/aifa-native.md)。19968 的完整溫度／模式封包尚待核對，不沿用舊 173 設定格式。
