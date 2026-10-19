@@ -1,5 +1,5 @@
 """Official eWeLink OAuth. Credentials and raw account/device replies stay encrypted."""
-import asyncio,base64,hashlib,hmac,json,secrets,time
+import asyncio,base64,hashlib,hmac,json,secrets,time,math
 from urllib.parse import urlencode
 import httpx
 from .adapters import AdapterError
@@ -12,7 +12,12 @@ def usage_key():return 'ewelink-usage:'+time.strftime('%Y-%m',time.gmtime())
 def sign(secret,message):return base64.b64encode(hmac.new(secret.encode(),message.encode(),hashlib.sha256).digest()).decode()
 def view(store):
  config=store.secret('ewelink-app');token=store.secret('ewelink');cache=store.one('settings','ewelink-integration',{})
- return {**{k:cache.get(k) for k in ['status','error','queried_at','items','total','limited','certification','platform_issue']},'configured':bool(config.get('app_id') and config.get('app_secret')),'connected':bool(token.get('access_token')),'region':token.get('region'),'redirect_url':CALLBACK,'monthly_free_calls':50000,'manual_refresh_only':True,'usage':{'month_utc':usage_key().split(':')[-1],'attempted_calls_by_region':store.one('settings',usage_key(),{}),'local_count_only':True}}
+ items=[]
+ for row in cache.get('items') or []:
+  device=next((d for d in store.devices() if d.get('adapter')=='ewelink' and d.get('config',{}).get('ewelink_device_id')==row.get('id')),None)
+  state=store.one('state',device['id'],{}) if device else {}
+  items.append({**row,'imported_device_id':device['id'] if device else None,'power':state.get('values',{}).get('power',row.get('power')),'control_ready':bool(device and device.get('config',{}).get('single_switch_confirmed'))})
+ return {**{k:cache.get(k) for k in ['status','error','queried_at','total','limited','certification','platform_issue']},'items':items,'configured':bool(config.get('app_id') and config.get('app_secret')),'connected':bool(token.get('access_token')),'region':token.get('region'),'redirect_url':CALLBACK,'monthly_free_calls':50000,'manual_refresh_only':not any(d.get('adapter')=='ewelink' and store.one('settings','sensor-refresh:'+d['id'],{}).get('enabled') for d in store.devices()),'usage':{'month_utc':usage_key().split(':')[-1],'attempted_calls_by_region':store.one('settings',usage_key(),{}),'local_count_only':True}}
 
 class EWeLink:
  def __init__(self):self.lock=asyncio.Lock();self.last_request=0
@@ -30,7 +35,7 @@ class EWeLink:
   store.set_secret('ewelink-oauth',{'state_hash':hashlib.sha256(state.encode()).hexdigest(),'expires_at':time.time()+600})
   return {'authorization_url':AUTH_URL+'?'+urlencode({'clientId':config['app_id'],'seq':seq,'authorization':sign(config['app_secret'],config['app_id']+'_'+seq),'redirectUrl':CALLBACK,'grantType':'authorization_code','state':state,'nonce':secrets.token_hex(4),'showQRCode':'true'}),'expires_in':600}
  async def request(self,store,region,method,path,body=None,token=None):
-  if region not in HOSTS or (method,path) not in [('POST','/v2/user/oauth/token'),('POST','/v2/user/refresh'),('GET','/v2/device/thing')]:raise AdapterError('ewelink_path','不支援此易微聯介面')
+  if region not in HOSTS or (method,path) not in [('POST','/v2/user/oauth/token'),('POST','/v2/user/refresh'),('GET','/v2/device/thing'),('GET','/v2/device/thing/status'),('POST','/v2/device/thing/status')]:raise AdapterError('ewelink_path','不支援此易微聯介面')
   config=store.secret('ewelink-app')
   if not config.get('app_id') or not config.get('app_secret'):raise AdapterError('ewelink_config','請先設定應用憑證')
   delay=1-(time.monotonic()-self.last_request)
@@ -118,3 +123,52 @@ class EWeLink:
    store.set_secret('ewelink',{});store.set_secret('ewelink-oauth',{});store.set_secret('ewelink-devices',{})
    store.put('settings','ewelink-integration',{'certification':'approved','status':'awaiting_authorization','items':[]})
    return view(store)
+
+ def owned(self,store,device):
+  cache=store.secret('ewelink-devices');ident=device.get('config',{}).get('ewelink_device_id')
+  if time.time()-cache.get('queried_at',0)>86400:raise AdapterError('ewelink_stale','請先重新同步易微聯設備清單')
+  row=next((t['itemData'] for t in cache.get('things',[]) if t.get('itemType') in [1,2] and t.get('itemData',{}).get('deviceid')==ident),None)
+  if not row or row.get('extra',{}).get('uiid')!=182 or device.get('config',{}).get('power_outlet')!=0:raise AdapterError('ewelink_owned','此設備尚未確認易微聯單一開關的對應')
+  return row
+ async def read_device(self,store,device):
+  from .adapters import observation
+  async with self.lock:
+   row=self.owned(store,device);token=await self.ensure_token(store)
+   reply=await self.request(store,token['region'],'GET','/v2/device/thing/status',{'type':1,'id':row['deviceid'],'params':'switches|power|voltage|current'},token=token['access_token'])
+   params=reply.get('params')
+   if not isinstance(params,dict):raise AdapterError('ewelink_format','易微聯沒有回傳設備狀態')
+   switches=params.get('switches') or []
+   primary=next((v.get('switch') for v in switches if isinstance(v,dict) and type(v.get('outlet')) is int and v['outlet']==0),None)
+   power=primary=='on' if primary in ['on','off'] else None
+   def reading(key):
+    value=params.get(key)
+    if isinstance(value,bool):return None
+    try:value=float(value)
+    except (TypeError,ValueError):return None
+    return value if math.isfinite(value) and value>=0 else None
+   result=observation('ewelink-cloud',{'power':power,'power_usage':reading('power'),'voltage':reading('voltage'),'current':reading('current')},['power'] if power is not None else [])
+   result.update(available=row.get('online') is True,physical_feedback=False,measurement_at=None)
+   return result
+ async def send_power(self,store,device,power):
+  if type(power) is not bool:raise AdapterError('ewelink_value','開關必須為布林值')
+  async with self.lock:
+   row=self.owned(store,device);token=await self.ensure_token(store)
+   try:await self.request(store,token['region'],'POST','/v2/device/thing/status',{'type':1,'id':row['deviceid'],'params':{'switches':[{'outlet':0,'switch':'on' if power else 'off'}]}},token=token['access_token'])
+   except AdapterError as e:
+    if e.code=='ewelink_connection':raise AdapterError('ewelink_unknown','易微聯送出結果不明，請確認實際開關；系統不自動重送') from None
+    raise
+
+ def import_single_switch(self,store,cloud_id):
+  cache=store.secret('ewelink-devices')
+  if time.time()-cache.get('queried_at',0)>86400:raise AdapterError('ewelink_stale','請先同步易微聯設備清單')
+  row=next((t['itemData'] for t in cache.get('things',[]) if t.get('itemType') in [1,2] and t.get('itemData',{}).get('deviceid')==cloud_id),None)
+  if not row or row.get('extra',{}).get('uiid')!=182:raise AdapterError('ewelink_profile','目前只開放已核對的 UIID 182 單一插座')
+  old=next((d for d in store.devices() if d.get('adapter')=='ewelink' and d.get('config',{}).get('ewelink_device_id')==cloud_id),None)
+  ident=old['id'] if old else 'ewelink-'+hashlib.sha256(cloud_id.encode()).hexdigest()[:12]
+  mac=row.get('params',{}).get('staMac') or row.get('extra',{}).get('staMac') or row.get('extra',{}).get('mac')
+  device=old or {'id':ident,'name':str(row.get('name') or '易微聯插座')[:80],'category':'智慧插座','kind':'switch','ips':[],'mac':mac,'vendor':str(row.get('brandName') or 'eWeLink'),'adapter':'ewelink','config':{},'placement':None,'notes':'由易微聯帳號接入；內網 IP 與位置待核對。','favorite':False,'aliases':[]}
+  device['config']={**device.get('config',{}),'ewelink_device_id':cloud_id,'uiid':182,'power_outlet':0,'single_switch_confirmed':True}
+  store.put('devices',ident,device)
+  if not old:store.put('settings','sensor-refresh:'+ident,{'enabled':True,'source':'local','interval_seconds':300})
+  store.event('device.imported',{'device_id':ident,'message':'已接入經確認的易微聯單一智慧插座，沒有發送開關指令'})
+  return device

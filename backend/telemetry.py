@@ -50,6 +50,8 @@ def normalize(mapping, dps=None, codes=None):
 def metrics_for(device, state):
  rows=normalize(device.get('config',{}).get('mapping',{}),state.get('values',{}).get('dps',{}))
  values=state.get('values',{})
+ if device['adapter']=='ewelink':
+  return [{'key':key,'code':key,'label':label,'unit':unit,'precision':2,'group':'energy','value':values.get(key),'alarm':False} for key,label,unit in [('power_usage','功率','W'),('voltage','電壓','V'),('current','電流','A')]]
  if device['adapter']=='lg' and device['kind']=='dehumidifier':
   rows=[{'key':'humidity','code':'humidity','label':'濕度','unit':'%','precision':0,'group':'environment','value':values.get('humidity'),'alarm':False}]
  if device['adapter']=='homeassistant':
@@ -76,7 +78,8 @@ def sensor_view(store, device):
  has_values=any(m['value'] is not None for m in rows)
  live=not use_cloud and state.get('fresh') and state.get('available') and age is not None and age<90
  status='live' if live and has_values else 'snapshot' if use_cloud and has_values and age<900 else 'stale' if has_values else 'missing'
- return {'auto_update':schedule_view(store,device),'id':device['id'],'name':device['name'],'kind':device['kind'],'room_id':(device.get('placement') or {}).get('room_id'),'ips':device.get('ips',[]),'metrics':rows,'status':status,'received_at':at,'measurement_at':None,'source':'tuya-cloud-snapshot' if use_cloud else state.get('source'),'source_label':'Tuya 雲端快照' if use_cloud else {'tuya-lan':'Tuya 區網','tuya-gateway-lan':'Tuya 閘道','lg-thinq-cloud':'LG ThinQ','lg-thinq':'LG ThinQ','home-assistant':'Home Assistant'}.get(state.get('source'),'尚無讀值' if not at else state.get('source','本機觀測')),'error':None if live else state.get('error'),'cloud_supported':cloud_linked(store,device),'last_cloud_attempt':store.one('settings','sensor-cloud-attempt:'+device['id'],{}).get('at')}
+ if device['adapter']=='ewelink' and has_values:status='snapshot' if state.get('fresh') and state.get('available') and age is not None and age<900 else 'stale'
+ return {'auto_update':schedule_view(store,device),'id':device['id'],'name':device['name'],'kind':device['kind'],'room_id':(device.get('placement') or {}).get('room_id'),'ips':device.get('ips',[]),'metrics':rows,'status':status,'received_at':at,'measurement_at':None,'source':'tuya-cloud-snapshot' if use_cloud else state.get('source'),'source_label':'Tuya 雲端快照' if use_cloud else {'tuya-lan':'Tuya 區網','tuya-gateway-lan':'Tuya 閘道','lg-thinq-cloud':'LG ThinQ','lg-thinq':'LG ThinQ','home-assistant':'Home Assistant','ewelink-cloud':'易微聯雲端快照'}.get(state.get('source'),'尚無讀值' if not at else state.get('source','本機觀測')),'error':None if live else state.get('error'),'cloud_supported':cloud_linked(store,device),'last_cloud_attempt':store.one('settings','sensor-cloud-attempt:'+device['id'],{}).get('at')}
 
 class CloudSnapshots:
  """Read-only status requests shared by manual queries and the background scheduler."""

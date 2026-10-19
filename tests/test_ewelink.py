@@ -62,7 +62,7 @@ def test_fixed_hosts_signature_quota_error_sanitization_and_usage(ew,monkeypatch
  with pytest.raises(AdapterError):asyncio.run(e.request(s,'as','GET','/v2/device/thing',token='fixture-token'))
  assert len(requests)==1
  with pytest.raises(AdapterError):asyncio.run(e.request(s,'https://evil.example','GET','/v2/device/thing'))
- with pytest.raises(AdapterError):asyncio.run(e.request(s,'as','POST','/v2/device/thing/status'))
+ with pytest.raises(AdapterError):asyncio.run(e.request(s,'as','DELETE','/v2/device/thing/status'))
 
 def test_refresh_and_restricted_inventory_preserve_auth_and_previous_devices(ew):
  s,e=ew;s.set_secret('ewelink',{'region':'as','access_token':'old','refresh_token':'fixture-refresh','expires_at':1});seen=[]
@@ -75,6 +75,35 @@ def test_refresh_and_restricted_inventory_preserve_auth_and_previous_devices(ew)
   token=await e.ensure_token(s);assert token['access_token']=='new-access'
   s.put('settings','ewelink-integration',{'items':[{'id':'existing'}]})
   with pytest.raises(AdapterError):await e.discover(s)
-  assert view(s)['items']==[{'id':'existing'}] and view(s)['connected']
+  assert [x['id'] for x in view(s)['items']]==['existing'] and view(s)['connected']
   await e.disconnect(s);assert not view(s)['connected'] and view(s)['configured']
  asyncio.run(run());assert seen==['/v2/user/refresh','/v2/device/thing']
+
+def test_confirmed_single_outlet_import_and_metering_do_not_expose_unused_channels(ew):
+ from backend.adapters import Adapters
+ from backend.telemetry import metrics_for,sensor_view
+ s,e=ew
+ s.set_secret('ewelink',{'access_token':'fixture-at','refresh_token':'fixture-rt','region':'as','expires_at':time.time()+3600})
+ s.set_secret('ewelink-devices',{'queried_at':time.time(),'things':[{'itemType':1,'itemData':{'deviceid':'fixture-device','name':'示例單一插座','online':True,'extra':{'uiid':182},'params':{'staMac':'aa:bb:cc:dd:ee:ff'}}}]})
+ d=e.import_single_switch(s,'fixture-device');s.put('devices',d['id'],{**d,'placement':{'confirmed':True},'name':'人工名稱'})
+ assert e.import_single_switch(s,'fixture-device')['name']=='人工名稱'
+ assert e.import_single_switch(s,'fixture-device')['placement']=={'confirmed':True}
+ assert not d['ips'] and len(s.devices())==1
+ assert s.one('settings','sensor-refresh:'+d['id'])['interval_seconds']==300
+ calls=[]
+ async def request(store,region,method,path,body=None,token=None):
+  calls.append((method,path,body))
+  if method=='POST':return {}
+  return {'params':{'switches':[{'outlet':0,'switch':'on'},{'outlet':1,'switch':'off'},{'outlet':2,'switch':'off'},{'outlet':3,'switch':'off'}],'power':'35.96','voltage':'117.29','current':'0.28','private_key':'never-output'}}
+ e.request=request
+ async def run():
+  state=await e.read_device(s,d);assert state['values']['power'] is True and state['commands']==['power']
+  assert state['values']['current']==0.28 and 'channels' not in state['values'] and 'never-output' not in json.dumps(state)
+  s.put('state',d['id'],state);m=metrics_for(d,state);assert [(v['value'],v['unit']) for v in m]==[(35.96,'W'),(117.29,'V'),(.28,'A')]
+  assert sensor_view(s,d)['status']=='snapshot'
+  await e.send_power(s,d,False)
+  assert calls[-1][2]=={'type':1,'id':'fixture-device','params':{'switches':[{'outlet':0,'switch':'off'}]}}
+  with pytest.raises(AdapterError):await e.send_power(s,d,'off')
+  d['config']['power_outlet']=1
+  with pytest.raises(AdapterError):await e.send_power(s,d,True)
+ asyncio.run(run())

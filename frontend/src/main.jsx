@@ -13,7 +13,7 @@ const timeAgo=t=>!t?'尚無觀測':Math.max(0,Math.round((Date.now()/1000-t)))<6
 const statusLabel=d=>d.infrared?.ready?'按鍵已同步':d.state?.fresh&&d.state?.available?(d.can_control?'可控制':'已連線'):!d.configured&&['tuya','lg','homeassistant'].includes(d.adapter)?'待接入':d.state?.error?'未回應':'等待觀測';
 const shortName=d=>d.name.replace('／Google Nest Mini','').replace('／Google Home Mini','').replace('／Google Nest Hub','').replace('同名連線','連線');
 const kinds={sensor:'感應器',cover:'窗簾',gateway:'智慧閘道',remote:'遙控器／按鈕',light:'燈具',switch:'開關／插座',speaker:'音箱／螢幕',camera:'攝影機',dehumidifier:'除濕機',laundry:'洗衣／乾衣機',computer:'電腦',mobile:'手機／平板',network:'網路設備',printer:'印表機',gaming:'遊戲機','unknown-smart':'智慧裝置待確認',other:'其他'};
-const methods={lifx:'LIFX 區網',cast:'Google Cast',tuya:'Tuya 區網',lg:'LG ThinQ',homeassistant:'Home Assistant',network:'網路觀測'};
+const methods={lifx:'LIFX 區網',cast:'Google Cast',tuya:'Tuya 區網',lg:'LG ThinQ',homeassistant:'Home Assistant',network:'網路觀測',ewelink:'易微聯雲端'};
 
 function Login({onDone}){const[token,setToken]=useState(''),[error,setError]=useState('');return <div className="login-page"><div className="login-card"><div className="brand-emblem"><House/></div><p className="eyebrow">WULING RESIDENCE</p><h1>歡迎回到武陵居</h1><p>請輸入中控存取權杖，連接家中的設備。</p><form onSubmit={async e=>{e.preventDefault();try{await api('/auth/login',{method:'POST',body:JSON.stringify({token})});onDone()}catch(e){setError(e.message)}}}><label>存取權杖<input type="password" autoComplete="current-password" value={token} onChange={e=>setToken(e.target.value)} required/></label>{error&&<p className="form-error">{error}</p>}<button className="primary wide">進入中控 <ChevronRight size={16}/></button></form><small>首次使用請在中控 Mac 開啟 localhost:8788，再建立其他裝置的存取權杖。</small></div></div>}
 

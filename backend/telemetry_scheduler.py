@@ -7,7 +7,7 @@ DEFAULT={'enabled':True,'source':'local','interval_seconds':35}
 def schedule_view(store,device):
  config=store.one('settings','sensor-refresh:'+device['id'],DEFAULT)
  runtime=store.one('settings','sensor-refresh-runtime:'+device['id'],{})
- return {'config':config,'last_attempt_at':runtime.get('last_attempt_at'),'last_success_at':runtime.get('last_success_at'),'last_error':runtime.get('last_error'),'failures':runtime.get('failures',0),'next_run_at':runtime.get('next_run_at') if config['enabled'] else None,'estimated_status_queries_per_day':math.ceil(86400/config['interval_seconds']) if config['enabled'] and config['source']=='tuya-cloud' else 0}
+ return {'config':config,'last_attempt_at':runtime.get('last_attempt_at'),'last_success_at':runtime.get('last_success_at'),'last_error':runtime.get('last_error'),'failures':runtime.get('failures',0),'next_run_at':runtime.get('next_run_at') if config['enabled'] else None,'minimum_interval_seconds':300 if device.get('adapter')=='ewelink' else 15,'provider_label':'易微聯雲端' if device.get('adapter')=='ewelink' else None,'estimated_status_queries_per_day':math.ceil(86400/config['interval_seconds']) if config['enabled'] and config['source']=='tuya-cloud' else 0}
 
 class TelemetryScheduler:
  def __init__(self,store,cloud,read_local):
@@ -50,7 +50,7 @@ class TelemetryScheduler:
     latest=schedule_view(self.store,device)
     if latest['config']!=config:return
     config=latest['config'];failures=latest['failures']+1 if error else 0
-    interval=config['interval_seconds'];delay=max(interval,min(3600,interval*2**min(failures,6))) if error and config['source']=='tuya-cloud' else interval
+    interval=config['interval_seconds'];delay=max(interval,min(3600,interval*2**min(failures,6))) if error and (config['source']=='tuya-cloud' or device.get('adapter')=='ewelink') else interval
     changes={'last_error':error,'failures':failures,'next_run_at':time.time()+delay if config['enabled'] else None}
     if not error:changes['last_success_at']=time.time()
     self.save_runtime(device,changes)

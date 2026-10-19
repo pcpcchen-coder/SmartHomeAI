@@ -43,9 +43,14 @@ def send_lifx(device,command,value):
  with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as sock:sock.sendto(packet,(device['ips'][0],56700))
 
 class Adapters:
- def __init__(self,store):self.store=store;self.casts={};self.cast_locks={};self.lg_profiles={};self.tuya_locks={}
+ def __init__(self,store):
+  from .ewelink import EWeLink
+  self.store=store;self.casts={};self.cast_locks={};self.lg_profiles={};self.tuya_locks={};self.ewelink=EWeLink()
  def config(self,d):return {**d.get('config',{}),**self.store.secret(d['id'])}
  def configured(self,d):
+  if d['adapter']=='ewelink':
+   try:self.ewelink.owned(self.store,d);return bool(self.store.secret('ewelink').get('access_token'))
+   except AdapterError:return False
   if d['adapter']=='tuya':
    c=self.config(d)
    return bool(c.get('local_key') and c.get('device_id') and not c.get('infrared_virtual') and (d.get('ips') or c.get('gateway_id')))
@@ -135,6 +140,7 @@ class Adapters:
    return r
  async def read(self,d):
   a=d['adapter']
+  if a=='ewelink':return await self.ewelink.read_device(self.store,d)
   if a=='lifx':return await asyncio.to_thread(read_lifx,d)
   if a=='cast':return await asyncio.to_thread(self.read_cast,d)
   if a=='tuya':return await asyncio.to_thread(self.read_tuya,d)
@@ -164,6 +170,9 @@ class Adapters:
   r=observation('icmp',{'reachable':online});r['available']=online;return r
  async def send(self,d,command,value):
   a=d['adapter']
+  if a=='ewelink':
+   if command!='power':raise AdapterError('unsupported','此易微聯插座僅開放已確認的電源控制')
+   return await self.ewelink.send_power(self.store,d,value)
   if a=='lifx':await asyncio.to_thread(send_lifx,d,command,value)
   elif a=='cast':
    def act():

@@ -6,7 +6,7 @@ AIFA Smart 相容接入支援登入、清單讀取，以及下方所述的基本
 
 `POST /integrations/aifa/login` 僅允許本機 peer，仍需中控認證與來源檢查。email/password 僅經 HTTPS 傳到固定 api.aifaremote.com/oauth2/token，不允許重新導向，密碼不保存。access/refresh token 加密保存，期限到達可刷新。錯誤不回傳上游原文或輸入值。`GET /integrations/aifa` 回傳白名單清單快取，沒有 token。`POST /integrations/aifa/discover` 讀 /devices，最少相隔 60 秒，失敗保留清單；完整 MAC 才可對應既有設備，不推測 IP、不改位置。`DELETE /integrations/aifa` 只移除本機 token 與快取，不刪除手機 App 設備，也不宣稱向廠商撤銷 token。
 
-`GET /integrations/ewelink` 顯示接入階段。介面呈現個人開發者認證、建立應用、帳號授權三步。已提供 eWeLink OAuth callback 與設備清單同步；目前只讀取與核對，不提供控制。專屬憑證尚待控制台應用清單問題解除。詳見 [接入說明](ewelink.md)。
+`GET /integrations/ewelink` 顯示接入階段。介面呈現個人開發者認證、建立應用、帳號授權三步。已提供 eWeLink OAuth callback 與設備清單同步；帳號已透過官方頁面授權；已確認的 UIID 182 單一插座可使用統一設備電源介面及功率、電壓、電流快照。詳見 [接入說明](ewelink.md)。
 
 瀏覽器（React / Three.js）→ 本機 FastAPI → 設備轉接器。SQLite 為配置與指令持久化來源，觀測狀態另存，金鑰不進前端或配置匯出。前端不直接存取設備網路。外部系統使用相同 API，避免依畫面或廠商差異控制。
 

@@ -24,7 +24,7 @@ from .ac_timers import ACTimers, timer_view
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);aifa_native=AifaNative(aifa_account);ewelink_account=EWeLink();ac_timers=None
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);aifa_native=AifaNative(aifa_account);ewelink_account=adapters.ewelink;ac_timers=None
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -229,6 +229,16 @@ async def ewelink_discover():
  try:return await ewelink_account.discover(store)
  except AdapterError as e:raise HTTPException(429 if e.code=='ewelink_cooldown' else 409,detail=e.message)
 
+class EWeLinkImport(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ single_switch_confirmed:Literal[True]
+@app.post(API+'/integrations/ewelink/devices/{cloud_id}/import',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_import(cloud_id:str,body:EWeLinkImport):
+ try:
+  async with ewelink_account.lock:device=ewelink_account.import_single_switch(store,cloud_id)
+  return await refresh_one(device)
+ except AdapterError as e:raise HTTPException(409,detail=e.message)
+
 @app.delete(API+'/integrations/ewelink',dependencies=[Depends(auth)],tags=['Integrations'])
 async def ewelink_disconnect():return await ewelink_account.disconnect(store)
 
@@ -402,6 +412,7 @@ class TelemetrySchedule(BaseModel):
 @app.put(API+'/devices/{id}/telemetry-schedule',dependencies=[Depends(auth)],tags=['Telemetry'])
 async def configure_telemetry_schedule(id:str,body:TelemetrySchedule):
  d=find(id)
+ if d['adapter']=='ewelink' and (body.source!='local' or body.interval_seconds<300):raise HTTPException(422,detail='易微聯已接入服務的背景更新至少相隔 300 秒，以控制免費額度')
  if not sensor_view(store,d):raise HTTPException(422,detail='此設備尚未提供感測數值')
  if body.source=='tuya-cloud':
   if body.interval_seconds<60:raise HTTPException(422,detail='Tuya 雲端更新間隔至少 60 秒')
@@ -549,9 +560,10 @@ async def execute(id,body,idem):
     import colorsys
     rgb=tuple(int(expected[i:i+2],16)/255 for i in [1,3,5]);h,s,_=colorsys.rgb_to_hsv(*rgb);values=readback['values'];delta=abs(values.get('hue',-999999)-round(h*65535));verified=min(delta,65535-delta)<=100 and abs(values.get('saturation',-999999)-round(s*65535))<=100
    result.update(status='confirmed' if verified else 'unconfirmed',message='設備回讀已確認' if verified else '已送出，尚未從設備確認目標狀態',state=readback)
+   if d['adapter']=='ewelink':result.update(status='unconfirmed',cloud_state_matches=verified,physical_feedback=False,message='易微聯雲端狀態已符合設定；請確認實體反應' if verified else '已送出，易微聯雲端尚未回報目標狀態；不自動重送')
   except Exception as e:
    result['message']=e.message if isinstance(e,AdapterError) else ('已送出，但設備回讀逾時' if result['status']=='sent' else '控制未成功，請檢查設備連線與設定')
-   if result['status']=='sent':
+   if result['status']=='sent' or isinstance(e,AdapterError) and e.code=='ewelink_unknown':
     result['status']='unconfirmed';previous=store.one('state',id,{})
     store.put('state',id,{**previous,'fresh':False,'commands':[]})
    else:result['status']='failed'

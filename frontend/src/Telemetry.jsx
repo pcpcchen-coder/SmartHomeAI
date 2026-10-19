@@ -11,7 +11,7 @@ const stamp=t=>t?new Date(t*1000).toLocaleString('zh-TW',{month:'2-digit',day:'2
 function StateChip({sensor:s}){return <span className={'reading-chip '+s.status}><i/>{STATES[s.status]}</span>}
 export function SensorReadings({sensor:s}){
  if(!s)return null;
- return <section className={'detail-readings '+s.status}><div className="reading-source"><strong>感測與數值</strong><StateChip sensor={s}/></div><dl className="sensor-readings">{s.metrics.map(m=><div key={m.key}><dt>{m.label}</dt><dd>{formatReading(m)} <small>{m.value!=null?m.unit:''}</small></dd></div>)}</dl><p className="reading-caption">{s.source_label} · {s.source==='tuya-cloud-snapshot'?'查詢':'接收'}：{stamp(s.received_at)}</p>{s.source==='tuya-cloud-snapshot'&&<p className="reading-caption">裝置未提供量測時間；快照不代表目前即時數值。</p>}</section>
+ return <section className={'detail-readings '+s.status}><div className="reading-source"><strong>感測與數值</strong><StateChip sensor={s}/></div><dl className="sensor-readings">{s.metrics.map(m=><div key={m.key}><dt>{m.label}</dt><dd>{formatReading(m)} <small>{m.value!=null?m.unit:''}</small></dd></div>)}</dl><p className="reading-caption">{s.source_label} · {['tuya-cloud-snapshot','ewelink-cloud'].includes(s.source)?'查詢':'接收'}：{stamp(s.received_at)}</p>{['tuya-cloud-snapshot','ewelink-cloud'].includes(s.source)&&<p className="reading-caption">裝置未提供量測時間；快照不代表目前即時數值。</p>}</section>
 }
 
 function Trend({data,metric,hours}){

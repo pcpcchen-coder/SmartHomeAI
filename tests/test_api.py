@@ -321,3 +321,15 @@ def test_ewelink_callback_and_config_are_local_and_state_protected(ctx,monkeypat
   assert remote.put(p+'/config',json={'app_id':'fixture-app-id','app_secret':'fixture-app-secret'}).status_code==403
   assert remote.post(p+'/authorize').status_code==403
   assert remote.get(p+'/callback',params={'state':state}).status_code==403
+
+def test_ewelink_import_requires_confirmation_and_preserves_placement(ctx,monkeypatch):
+ from backend.ewelink import EWeLink
+ c,s,a,_=ctx;e=EWeLink();monkeypatch.setattr(module,'ewelink_account',e)
+ s.set_secret('ewelink-devices',{'queried_at':time.time(),'things':[{'itemType':1,'itemData':{'deviceid':'fixture','name':'demo plug','online':True,'extra':{'uiid':182},'params':{}}}]})
+ p='/api/v1/integrations/ewelink/devices/fixture/import'
+ assert c.post(p,json={}).status_code==422
+ assert c.post(p,json={'single_switch_confirmed':False}).status_code==422
+ r=c.post(p,json={'single_switch_confirmed':True});assert r.status_code==200
+ d=r.json();assert not d['ips'] and d['adapter']=='ewelink' and not a.sent
+ assert c.put('/api/v1/devices/'+d['id']+'/telemetry-schedule',json={'enabled':True,'source':'local','interval_seconds':60}).status_code==422
+ assert c.put('/api/v1/devices/'+d['id']+'/telemetry-schedule',json={'enabled':True,'source':'local','interval_seconds':300}).status_code==200
