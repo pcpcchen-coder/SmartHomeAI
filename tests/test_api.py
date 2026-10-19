@@ -299,3 +299,25 @@ def test_aifa_native_route_requires_auth_owned_profile_and_idempotency(ctx,monke
  assert sent==['ffa026f0']
  assert c.put(p+'/verify',json={'command_id':r.json()['id'],'verified':True}).json()['verified']
  c.headers.pop('Authorization');assert c.get(p).status_code==401 and c.post(p,headers={'Idempotency-Key':'unauthorized'}).status_code==401
+
+def test_ewelink_callback_and_config_are_local_and_state_protected(ctx,monkeypatch):
+ from backend.ewelink import EWeLink
+ from urllib.parse import urlparse,parse_qs
+ c,s,_,_=ctx;e=EWeLink();monkeypatch.setattr(module,'ewelink_account',e)
+ p='/api/v1/integrations/ewelink'
+ assert c.put(p+'/config',json={'app_id':'fixture-app-id','app_secret':'fixture-app-secret'}).status_code==200
+ assert 'fixture-app-secret' not in c.get(p).text
+ r=c.post(p+'/authorize');assert r.status_code==200
+ state=parse_qs(urlparse(r.json()['authorization_url']).query)['state'][0]
+ assert c.get(p+'/callback',params={'code':'code','state':'bad','region':'as'}).status_code==409
+ async def finish(store,code,st,region):
+  assert (code,st,region)==('code',state,'as')
+ monkeypatch.setattr(e,'finish',finish)
+ c.headers.pop('Authorization')
+ r=c.get(p+'/callback',params={'code':'code','state':state,'region':'as'},follow_redirects=False)
+ assert r.status_code==303 and r.headers['Location']=='/?ewelink=connected' and r.headers['Referrer-Policy']=='no-referrer'
+ with TestClient(module.app,base_url='http://127.0.0.1:8788',client=('192.168.1.20',60000)) as remote:
+  remote.headers['Authorization']='Bearer '+s.master_token
+  assert remote.put(p+'/config',json={'app_id':'fixture-app-id','app_secret':'fixture-app-secret'}).status_code==403
+  assert remote.post(p+'/authorize').status_code==403
+  assert remote.get(p+'/callback',params={'state':state}).status_code==403

@@ -18,12 +18,13 @@ from .infrared import Infrared, controller_type, ir_view
 from .aifa import AifaAccount, account_view
 from .native_ir import NativeIR
 from .aifa_native import AifaNative
+from .ewelink import EWeLink,view as ewelink_view
 from .ac_timers import ACTimers, timer_view
 
 BASE=Path(__file__).resolve().parent.parent
 store=Store(os.environ.get('WULING_DATA_DIR',Path.home()/'Library/Application Support/WulingHomeControl' if os.sys.platform=='darwin' else Path.home()/'.local/share/wuling-home-control'))
 adapters=Adapters(store);locks={};refresh_lock=asyncio.Lock()
-cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);aifa_native=AifaNative(aifa_account);ac_timers=None
+cloud_snapshots=CloudSnapshots();telemetry_scheduler=None;infrared=Infrared();aifa_account=AifaAccount();native_ir=NativeIR(aifa_account,infrared);aifa_native=AifaNative(aifa_account);ewelink_account=EWeLink();ac_timers=None
 SESSION='wuling_session';API='/api/v1'
 
 def initialize():
@@ -117,7 +118,7 @@ app=FastAPI(title='武陵居 Home Control API',version='1.0.0',description='版�
 @app.middleware('http')
 async def headers(request,call_next):
  response=await call_next(request)
- response.headers['X-Content-Type-Options']='nosniff';response.headers['Referrer-Policy']='same-origin'
+ response.headers['X-Content-Type-Options']='nosniff';response.headers['Referrer-Policy']='no-referrer' if request.url.path.endswith('/ewelink/callback') else 'same-origin'
  response.headers['Content-Security-Policy']="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'"
  if request.url.path.startswith('/api/v1'):response.headers['Cache-Control']='no-store'
  return response
@@ -191,7 +192,45 @@ async def ir_command(id:str,body:IRCommand,request:Request):
 
 @app.get(API+'/integrations/ewelink',dependencies=[Depends(auth)],tags=['Integrations'])
 async def ewelink_status():
- return {'status':store.one('settings','ewelink-integration',{}).get('status','unlinked'),'connected':False}
+ return ewelink_view(store)
+
+class EWeLinkConfig(BaseModel):
+ model_config=ConfigDict(extra='forbid',strict=True)
+ app_id:str=Field(min_length=8,max_length=128)
+ app_secret:str=Field(min_length=8,max_length=128)
+
+@app.put(API+'/integrations/ewelink/config',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_config(body:EWeLinkConfig,request:Request):
+ if request.client.host not in ['127.0.0.1','::1']:raise HTTPException(403,detail='請在這台中控 Mac 設定應用憑證')
+ try:
+  async with ewelink_account.lock:return ewelink_account.configure(store,body.app_id,body.app_secret)
+ except AdapterError as e:raise HTTPException(409,detail=e.message)
+
+@app.post(API+'/integrations/ewelink/authorize',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_authorize(request:Request):
+ if request.client.host not in ['127.0.0.1','::1']:raise HTTPException(403,detail='請在這台中控 Mac 完成帳號授權')
+ try:
+  async with ewelink_account.lock:return ewelink_account.begin(store)
+ except AdapterError as e:raise HTTPException(409,detail=e.message)
+
+@app.get(API+'/integrations/ewelink/callback',tags=['Integrations'])
+async def ewelink_callback(request:Request):
+ # Vendor redirects cannot carry the strict session cookie. A single-use, expiring
+ # state plus loopback peer checks authorize this narrowly scoped callback instead.
+ if request.client.host not in ['127.0.0.1','::1'] or request.url.hostname not in ['127.0.0.1','localhost']:raise HTTPException(403,detail='授權回呼只接受這台中控 Mac')
+ try:await ewelink_account.finish(store,request.query_params.get('code'),request.query_params.get('state'),request.query_params.get('region'))
+ except AdapterError as e:
+  from html import escape
+  return HTMLResponse('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>易微聯授權</title><h1>易微聯授權尚未完成</h1><p>'+escape(e.message)+'</p><a href="/">回到武陵居中控</a></html>',status_code=409)
+ return Response(status_code=303,headers={'Location':'/?ewelink=connected'})
+
+@app.post(API+'/integrations/ewelink/discover',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_discover():
+ try:return await ewelink_account.discover(store)
+ except AdapterError as e:raise HTTPException(429 if e.code=='ewelink_cooldown' else 409,detail=e.message)
+
+@app.delete(API+'/integrations/ewelink',dependencies=[Depends(auth)],tags=['Integrations'])
+async def ewelink_disconnect():return await ewelink_account.disconnect(store)
 
 @app.get(API+'/integrations/aifa',dependencies=[Depends(auth)],tags=['Integrations'])
 async def aifa_status():return account_view(store)
