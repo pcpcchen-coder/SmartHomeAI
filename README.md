@@ -75,3 +75,5 @@ macOS 預設資料目錄為 `~/Library/Application Support/WulingHomeControl/`�
 AIFA Smart 已套用 19968 且手機防霉按鈕有效時，可在「完整遙控器 → AIFA 防霉」透過 AIFA i-Ctrl 按下原廠防霉。這是單次按鍵，要求先確認冷氣完全停止，不自動重送、不安排十分鐘後關機；中控實測結果另外記錄。詳見 [AIFA 原廠防霉接入](docs/aifa-native.md)。19968 的完整溫度／模式封包尚待核對，不沿用舊 173 設定格式。
 
 易微聯接入與實機驗證界線，詳見 [eWeLink 官方 OAuth](docs/ewelink.md)。
+
+AIOS（Nous）語音控制的中控端接入規劃，詳見 [AIOS 接入規劃](docs/AIOS接入規劃.md)。
